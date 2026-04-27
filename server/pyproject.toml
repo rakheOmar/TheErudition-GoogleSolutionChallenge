@@ -1,0 +1,25 @@
+[project]
+name = "server"
+version = "1.0.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "discord-py>=2.7.1",
+    "fastapi[standard]>=0.135.1",
+    "httpx>=0.28.1",
+    "litellm>=1.81.14",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.2",
+    "python-telegram-bot>=22.7",
+    "supabase>=2.28.0",
+    "uvicorn>=0.41.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "ruff>=0.15.2",
+]
