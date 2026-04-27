@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "hackathon-idea-generator": {
+      "source": "bernieweb3/hackathon-ai-devkit",
+      "sourceType": "github",
+      "computedHash": "796a310baa07d852ecc620a5b7bdb091e93e33e665784274b09575d5a3c5fc93"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",
