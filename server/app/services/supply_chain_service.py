@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import count
+from typing import Any
 
 from app.db import db
 from app.events.event_bus import publish_disruption_created, publish_shipment_updated
@@ -55,11 +57,98 @@ class SupplyChainService:
     def _load_or_seed(self):
         if db.has_data():
             self._state = self._load_state()
+            self._ensure_base_policies()
             print("[Startup] Loaded data from database")
         else:
             self._state = self._seed_state()
             self._persist_all()
             print("[Startup] Seeded fresh data")
+
+    def _base_policies(self) -> dict[str, PolicyLayer]:
+        return {
+            "policy_1": PolicyLayer(
+                id="policy_1",
+                owner_type="operations",
+                rule_type="prefer_node",
+                applies_to=["nagpur"],
+                params={"notes": "Strategic relief hub"},
+                priority=120,
+                enabled=True,
+            ),
+            "policy_2": PolicyLayer(
+                id="policy_2",
+                owner_type="compliance",
+                rule_type="block_carrier",
+                applies_to=["tempcontrol"],
+                params={"reason": "Quality audit pending"},
+                priority=5,
+                enabled=True,
+            ),
+            "policy_3": PolicyLayer(
+                id="policy_3",
+                owner_type="sla",
+                rule_type="prefer_node",
+                applies_to=["bengaluru", "hyderabad"],
+                params={"notes": "Premium SLA tier hubs"},
+                priority=80,
+                enabled=True,
+            ),
+            "policy_4": PolicyLayer(
+                id="policy_4",
+                owner_type="operations",
+                rule_type="block_node",
+                applies_to=["chandigarh"],
+                params={"notes": "Seasonal winter operations"},
+                priority=50,
+                enabled=False,
+            ),
+            "policy_5": PolicyLayer(
+                id="policy_5",
+                owner_type="compliance",
+                rule_type="block_edge",
+                applies_to=["e_5"],
+                params={"reason": "Known bottleneck under compliance watch"},
+                priority=20,
+                enabled=True,
+            ),
+            "policy_6": PolicyLayer(
+                id="policy_6",
+                owner_type="sla",
+                rule_type="prefer_node",
+                applies_to=["mumbai", "delhi"],
+                params={"notes": "Primary express consolidation hubs"},
+                priority=90,
+                enabled=True,
+            ),
+            "policy_7": PolicyLayer(
+                id="policy_7",
+                owner_type="operations",
+                rule_type="block_node",
+                applies_to=["guwahati"],
+                params={"notes": "Monsoon volatility buffer"},
+                priority=35,
+                enabled=False,
+            ),
+            "policy_8": PolicyLayer(
+                id="policy_8",
+                owner_type="compliance",
+                rule_type="block_carrier",
+                applies_to=["fastlane"],
+                params={"reason": "Temporary audit hold"},
+                priority=15,
+                enabled=False,
+            ),
+        }
+
+    def _ensure_base_policies(self) -> None:
+        base = self._base_policies()
+        missing = False
+        for policy_id, policy in base.items():
+            if policy_id not in self._state.policies:
+                self._state.policies[policy_id] = policy
+                missing = True
+        if missing:
+            db.save_policies(self._state.policies)
 
     def _load_state(self) -> ServiceState:
         return ServiceState(
@@ -212,16 +301,7 @@ class SupplyChainService:
                 weights={"eta": 0.5, "cost": 0.3, "sla": 0.15, "risk": 0.05}),
         }
 
-        policies = {
-            "policy_1": PolicyLayer(id="policy_1", owner_type="operations", rule_type="prefer_node",
-                applies_to=["nagpur"], params={"notes": "Strategic relief hub"}, priority=120, enabled=True),
-            "policy_2": PolicyLayer(id="policy_2", owner_type="compliance", rule_type="block_carrier",
-                applies_to=["tempcontrol"], params={"reason": "Quality audit pending"}, priority=5, enabled=True),
-            "policy_3": PolicyLayer(id="policy_3", owner_type="sla", rule_type="prefer_node",
-                applies_to=["bengaluru", "hyderabad"], params={"notes": "Premium SLA tier"}, priority=80, enabled=True),
-            "policy_4": PolicyLayer(id="policy_4", owner_type="operations", rule_type="block_node",
-                applies_to=["chandigarh"], params={"notes": "Winter restrictions"}, priority=50, enabled=False),
-        }
+        policies = self._base_policies()
 
         disruptions: dict[str, ScenarioEvent] = {}
         shipments: dict[str, Shipment] = {}
@@ -283,7 +363,7 @@ class SupplyChainService:
     def list_disruptions(self) -> list[ScenarioEvent]:
         return sorted(self._state.disruptions.values(), key=lambda item: item.id)
 
-    async def create_disruption(self, request: DisruptionCreateRequest) -> ScenarioEvent:
+    def create_disruption(self, request: DisruptionCreateRequest) -> ScenarioEvent:
         disruption_id = f"event_{next(self._event_counter)}"
         disruption = ScenarioEvent(id=disruption_id, **request.model_dump())
         self._state.disruptions[disruption.id] = disruption
@@ -297,7 +377,7 @@ class SupplyChainService:
             },
         )
         db.save_disruptions(self._state.disruptions)
-        await publish_disruption_created(disruption.model_dump())
+        self._publish_event_task(publish_disruption_created(disruption.model_dump()))
         return disruption
 
     def list_shipments(self) -> list[ShipmentWithRecommendation]:
@@ -351,6 +431,9 @@ class SupplyChainService:
             },
         )
         db.save_shipments(self._state.shipments)
+        self._publish_event_task(
+            publish_shipment_updated(shipment.model_dump(), recommendation.model_dump())
+        )
         return ShipmentWithRecommendation(shipment=shipment, recommendation=recommendation)
 
     def recompute_shipment(self, shipment_id: str) -> ShipmentWithRecommendation:
@@ -529,6 +612,311 @@ class SupplyChainService:
             corridors_supported=len(self._state.corridors),
         )
 
+    def predictive_risks(self) -> list[dict[str, Any]]:
+        ranked: list[dict[str, Any]] = []
+        for corridor in self._state.corridors.values():
+            risk = self._corridor_risk_score(corridor.id)
+            if risk < 2.5:
+                continue
+            ranked.append(
+                {
+                    "corridor_id": corridor.id,
+                    "corridor_name": corridor.name,
+                    "predicted_risk": round(min(10.0, risk), 2),
+                    "risk_band": self._risk_band(risk),
+                }
+            )
+        ranked.sort(key=lambda item: item["predicted_risk"], reverse=True)
+        return ranked[:8]
+
+    def proactive_risk_forecast(self) -> list[dict[str, Any]]:
+        windows = [2, 6, 12]
+        forecasts: list[dict[str, Any]] = []
+        for corridor in self._state.corridors.values():
+            base_risk = self._corridor_risk_score(corridor.id)
+            affected_shipments = [
+                s for s in self._state.shipments.values() if s.corridor_id == corridor.id
+            ]
+            shipment_pressure = min(0.2, len(affected_shipments) * 0.03)
+            drivers = self._forecast_drivers(corridor.id, affected_shipments)
+            entries = []
+            for hours in windows:
+                growth_factor = 1.0 + (0.08 if hours == 6 else 0.16 if hours == 12 else 0.0)
+                predicted_risk = min(10.0, (base_risk + shipment_pressure) * growth_factor)
+                probability = max(0.05, min(0.95, predicted_risk / 10.0))
+                entries.append(
+                    {
+                        "hours": hours,
+                        "predicted_risk": round(predicted_risk, 2),
+                        "probability_sla_failure": round(probability, 2),
+                        "risk_band": self._risk_band(predicted_risk),
+                    }
+                )
+
+            if max(item["probability_sla_failure"] for item in entries) < 0.35:
+                continue
+            forecasts.append(
+                {
+                    "corridor_id": corridor.id,
+                    "corridor_name": corridor.name,
+                    "drivers": drivers,
+                    "forecast": entries,
+                }
+            )
+
+        forecasts.sort(
+            key=lambda item: item["forecast"][2]["probability_sla_failure"], reverse=True
+        )
+        return forecasts[:8]
+
+    def analytics_kpis(self) -> dict[str, float | int]:
+        shipments = list(self._state.shipments.values())
+        recommendations = [self._state.recommendations.get(s.id) for s in shipments]
+        recommendations = [r for r in recommendations if r is not None]
+
+        reroute_count = sum(1 for r in recommendations if r.action == "reroute")
+        hold_count = sum(1 for r in recommendations if r.action == "hold_and_escalate")
+        at_risk_count = sum(1 for r in recommendations if (r.expected_impact.get("risk", 0) >= 5))
+        sla_gap_total = sum(max(0.0, r.expected_impact.get("sla_gap_h", 0.0)) for r in recommendations)
+        avg_risk = sum(r.expected_impact.get("risk", 0.0) for r in recommendations) / max(len(recommendations), 1)
+        auto_actions = sum(1 for a in self._state.audit_log if a.action == "auto_reroute_executed")
+
+        return {
+            "shipments_total": len(shipments),
+            "at_risk_shipments": at_risk_count,
+            "reroute_recommendations": reroute_count,
+            "hold_recommendations": hold_count,
+            "avg_risk": round(avg_risk, 2),
+            "sla_gap_hours_total": round(sla_gap_total, 2),
+            "auto_actions_executed": auto_actions,
+            "active_disruptions": sum(1 for d in self._state.disruptions.values() if d.active),
+        }
+
+    def auto_execute_recommendations(
+        self, confidence_threshold: float = 0.85, risk_threshold: float = 5.0
+    ) -> dict[str, int]:
+        executed = 0
+        escalated = 0
+        for shipment in self._state.shipments.values():
+            recommendation = self._state.recommendations.get(shipment.id)
+            if recommendation is None:
+                recommendation = self._compute_recommendation(shipment)
+                self._state.recommendations[shipment.id] = recommendation
+
+            risk = recommendation.expected_impact.get("risk", 0.0)
+            if recommendation.confidence < confidence_threshold or risk < risk_threshold:
+                continue
+
+            if recommendation.action == "reroute":
+                shipment.status = "in_transit"
+                executed += 1
+                self._record_audit(
+                    entity_type="shipment",
+                    entity_id=shipment.id,
+                    action="auto_reroute_executed",
+                    details={"confidence": recommendation.confidence, "risk": risk},
+                )
+            elif recommendation.action == "hold_and_escalate":
+                shipment.status = "pending"
+                escalated += 1
+                self._record_audit(
+                    entity_type="shipment",
+                    entity_id=shipment.id,
+                    action="auto_hold_escalated",
+                    details={"confidence": recommendation.confidence, "risk": risk},
+                )
+
+        db.save_shipments(self._state.shipments)
+        return {"auto_reroutes": executed, "auto_escalations": escalated}
+
+    async def suggest_auto_policies(self, ttl_hours: int = 3) -> list[dict[str, Any]]:
+        forecasts = self.proactive_risk_forecast()[:5]
+        if not forecasts:
+            return []
+
+        suggestions: list[dict[str, Any]] = []
+        for item in forecasts:
+            corridor_id = item["corridor_id"]
+            top_prob = item["forecast"][2]["probability_sla_failure"]
+            top_risk = item["forecast"][2]["predicted_risk"]
+            suggestion = {
+                "suggestion_id": f"sugg_{corridor_id}_{ttl_hours}",
+                "title": f"Temporary block on {item['corridor_name']}",
+                "rule_type": "block_edge",
+                "owner_type": "operations",
+                "applies_to": [corridor_id],
+                "priority": 20,
+                "params": {
+                    "reason": "AI suggested due to forecasted SLA failure",
+                    "ttl_hours": ttl_hours,
+                    "probability_sla_failure": top_prob,
+                    "predicted_risk": top_risk,
+                    "drivers": item["drivers"],
+                },
+                "confidence": round(min(0.96, 0.55 + top_prob * 0.4), 2),
+            }
+            suggestions.append(suggestion)
+        return suggestions
+
+    def approve_policy_suggestion(self, suggestion: dict[str, Any]) -> PolicyLayer:
+        request = PolicyCreateRequest(
+            owner_type=suggestion.get("owner_type", "operations"),
+            rule_type=suggestion.get("rule_type", "block_edge"),
+            applies_to=suggestion.get("applies_to", []),
+            params=suggestion.get("params", {}),
+            priority=int(suggestion.get("priority", 50)),
+            enabled=True,
+        )
+        created = self.create_policy(request)
+        self._record_audit(
+            entity_type="policy",
+            entity_id=created.id,
+            action="ai_policy_approved",
+            details={
+                "source": "ai_suggestion",
+                "suggestion_id": suggestion.get("suggestion_id", ""),
+            },
+        )
+        return created
+
+    def simulate_disruption_worsening(self, factor: float = 1.3) -> dict[str, Any]:
+        impacted = []
+        baseline_risk_total = 0.0
+        projected_risk_total = 0.0
+        for shipment in self._state.shipments.values():
+            rec = self._state.recommendations.get(shipment.id)
+            if rec is None:
+                rec = self._compute_recommendation(shipment)
+                self._state.recommendations[shipment.id] = rec
+            risk = float(rec.expected_impact.get("risk", 0.0))
+            projected = min(10.0, risk * factor)
+            baseline_risk_total += risk
+            projected_risk_total += projected
+            sla_gap = float(rec.expected_impact.get("sla_gap_h", 0.0))
+            projected_gap = max(0.0, sla_gap * factor)
+            if projected >= 5.0 or projected_gap > 0.5:
+                impacted.append(
+                    {
+                        "shipment_id": shipment.id,
+                        "corridor_id": shipment.corridor_id,
+                        "current_action": rec.action,
+                        "current_risk": round(risk, 2),
+                        "projected_risk": round(projected, 2),
+                        "projected_sla_gap_h": round(projected_gap, 2),
+                        "recommended_action": "reroute" if projected < 7 else "hold_and_escalate",
+                    }
+                )
+        impacted.sort(key=lambda item: item["projected_risk"], reverse=True)
+        estimated_savings = round(sum(max(0.0, i["projected_sla_gap_h"] * 0.5) for i in impacted), 2)
+        return {
+            "factor": factor,
+            "impacted_shipments": impacted[:20],
+            "impacted_count": len(impacted),
+            "estimated_sla_hours_at_risk": round(sum(i["projected_sla_gap_h"] for i in impacted), 2),
+            "estimated_sla_hours_saved_if_actioned": estimated_savings,
+            "risk_delta_total": round(projected_risk_total - baseline_risk_total, 2),
+        }
+
+    async def copilot_chat(self, prompt: str) -> dict[str, Any]:
+        normalized = prompt.lower().strip()
+        if "top" in normalized and "risk" in normalized:
+            ranked = sorted(
+                self.list_shipments(),
+                key=lambda item: item.recommendation.expected_impact.get("risk", 0),
+                reverse=True,
+            )[:5]
+            data = [
+                {
+                    "shipment_id": item.shipment.id,
+                    "risk": item.recommendation.expected_impact.get("risk", 0),
+                    "action": item.recommendation.action,
+                }
+                for item in ranked
+            ]
+            return {"intent": "top_risk_shipments", "data": data}
+
+        if "why reroute" in normalized or "why" in normalized:
+            target = None
+            for shipment in self._state.shipments.values():
+                if shipment.id in normalized:
+                    target = shipment
+                    break
+            if not target:
+                return {
+                    "intent": "explain_reroute",
+                    "message": "Please include shipment id, e.g. ship_101",
+                }
+            rec = self._state.recommendations.get(target.id)
+            if not rec:
+                rec = self._compute_recommendation(target)
+            return {
+                "intent": "explain_reroute",
+                "shipment_id": target.id,
+                "data": {
+                    "action": rec.action,
+                    "risk": rec.expected_impact.get("risk", 0),
+                    "reasons": rec.reason_codes,
+                },
+            }
+
+        if "what should i do" in normalized or "what now" in normalized:
+            kpis = self.analytics_kpis()
+            risks = self.proactive_risk_forecast()[:3]
+            return {
+                "intent": "next_actions",
+                "data": {
+                    "at_risk_shipments": kpis["at_risk_shipments"],
+                    "recommended_steps": [
+                        "Auto-execute high-confidence reroutes",
+                        "Apply temporary AI-suggested corridor blocks",
+                        "Escalate critical shipments to operations",
+                    ],
+                    "priority_corridors": [r["corridor_name"] for r in risks],
+                },
+            }
+
+        return {
+            "intent": "fallback",
+            "message": "Try: 'show top 5 at-risk shipments', 'why reroute ship_101', or 'what should I do now?'",
+        }
+
+    async def incident_timeline(self, disruption_id: str) -> dict[str, Any]:
+        disruption = self._state.disruptions.get(disruption_id)
+        if not disruption:
+            return {"error": "Disruption not found"}
+
+        impacted = []
+        for shipment in self._state.shipments.values():
+            rec = self._state.recommendations.get(shipment.id)
+            if rec is None:
+                rec = self._compute_recommendation(shipment)
+            if shipment.corridor_id in disruption.target_values or disruption.target_type == "global":
+                impacted.append(
+                    {
+                        "shipment_id": shipment.id,
+                        "risk": rec.expected_impact.get("risk", 0),
+                        "action": rec.action,
+                    }
+                )
+
+        impacted.sort(key=lambda item: item["risk"], reverse=True)
+        timeline = [
+            {"phase": "detected", "note": f"{disruption.event_type} detected with {disruption.severity} severity"},
+            {"phase": "impact", "note": f"{len(impacted)} shipments potentially impacted"},
+            {"phase": "action", "note": "Recommendations generated and available for auto-execution"},
+            {"phase": "outcome", "note": "Monitor SLA gap and risk trend over next 2/6/12 hours"},
+        ]
+        summary = (
+            f"Incident {disruption.id}: {disruption.event_type} at {disruption.severity} severity impacted "
+            f"{len(impacted)} shipments. Suggested actions prioritize reroutes on high-risk lanes."
+        )
+        return {
+            "disruption_id": disruption.id,
+            "timeline": timeline,
+            "top_impacted_shipments": impacted[:10],
+            "ai_summary": summary,
+        }
+
     def _record_audit(
         self,
         *,
@@ -547,6 +935,52 @@ class SupplyChainService:
                 details=details,
             )
         )
+
+    def _publish_event_task(self, coroutine: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coroutine)
+        except RuntimeError:
+            pass
+
+    def _corridor_risk_score(self, corridor_id: str) -> float:
+        base = 1.2
+        for event in self._state.disruptions.values():
+            if not event.active:
+                continue
+            if event.target_type == "corridor" and corridor_id in event.target_values:
+                base += event.risk_delta + self._severity_to_risk(event.severity)
+            if event.target_type == "global":
+                base += event.risk_delta * 0.6
+        return base
+
+    def _risk_band(self, risk: float) -> str:
+        if risk >= 7:
+            return "critical"
+        if risk >= 5:
+            return "high"
+        if risk >= 3:
+            return "medium"
+        return "low"
+
+    def _forecast_drivers(
+        self, corridor_id: str, corridor_shipments: list[Shipment]
+    ) -> list[dict[str, Any]]:
+        drivers: list[dict[str, Any]] = []
+        active_disruptions = [d for d in self._state.disruptions.values() if d.active]
+        weather_weight = sum(1 for d in active_disruptions if d.event_type == "weather_alert") * 0.08
+        traffic_weight = sum(1 for d in active_disruptions if d.event_type == "traffic_congestion") * 0.06
+        policy_weight = sum(
+            1 for p in self._state.policies.values() if p.enabled and p.rule_type.startswith("block_")
+        ) * 0.04
+        demand_weight = min(0.2, len(corridor_shipments) * 0.03)
+
+        drivers.append({"name": "weather", "weight": round(min(0.45, weather_weight + 0.1), 2)})
+        drivers.append({"name": "traffic", "weight": round(min(0.35, traffic_weight + 0.08), 2)})
+        drivers.append({"name": "policy_constraints", "weight": round(min(0.25, policy_weight), 2)})
+        drivers.append({"name": "historical_delay_pattern", "weight": round(min(0.3, demand_weight + 0.05), 2)})
+        drivers.sort(key=lambda item: item["weight"], reverse=True)
+        return drivers
 
     def _recompute_all_shipments(self) -> None:
         for shipment in self._state.shipments.values():
@@ -840,7 +1274,7 @@ class SupplyChainService:
                         if e.target_type == "node" and node.id in e.target_values and e.active]
             if existing:
                 continue
-            self.create_disruption(DisruptionCreateRequest(
+            await self.create_disruption(DisruptionCreateRequest(
                 event_type="weather_alert",
                 severity=severity,
                 target_type="node",
@@ -850,7 +1284,58 @@ class SupplyChainService:
                 active=True,
             ))
             created += 1
+
+        # Additional multifaceted signal: rush-hour congestion forecast
+        hour = datetime.now(UTC).hour
+        in_rush_hour = hour in {6, 7, 8, 9, 16, 17, 18, 19}
+        if in_rush_hour:
+            has_global_traffic = any(
+                e.active and e.target_type == "global" and e.event_type == "traffic_congestion"
+                for e in self._state.disruptions.values()
+            )
+            if not has_global_traffic:
+                await self.create_disruption(
+                    DisruptionCreateRequest(
+                        event_type="traffic_congestion",
+                        severity="medium",
+                        target_type="global",
+                        target_values=["rush_hour"],
+                        eta_multiplier=1.15,
+                        risk_delta=0.9,
+                        active=True,
+                    )
+                )
+                created += 1
+
         return {"status": "ok", "disruptions_created": created}
+
+    async def run_hero_demo(self) -> dict[str, Any]:
+        self.reset_all()
+        seeded = self.seed_rich_demo()
+        weather = await self.check_weather_and_create_disruptions()
+        auto = self.auto_execute_recommendations(confidence_threshold=0.8, risk_threshold=4.5)
+        kpis = self.analytics_kpis()
+        forecast = self.proactive_risk_forecast()[:3]
+        self._record_audit(
+            entity_type="system",
+            entity_id="hero_demo",
+            action="hero_demo_executed",
+            details={
+                "shipments_seeded": int(seeded.shipments_seeded),
+                "disruptions_seeded": int(seeded.disruptions_seeded),
+                "weather_created": int(weather.get("disruptions_created", 0)),
+                "auto_reroutes": int(auto.get("auto_reroutes", 0)),
+            },
+        )
+        return {
+            "status": "ok",
+            "message": "Hero demo scenario prepared",
+            "seeded": seeded.model_dump(),
+            "weather": weather,
+            "auto_actions": auto,
+            "kpis": kpis,
+            "top_forecast": forecast,
+        }
 
 
 supply_chain_service = SupplyChainService()

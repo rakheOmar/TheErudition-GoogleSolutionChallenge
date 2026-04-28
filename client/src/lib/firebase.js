@@ -103,3 +103,13 @@ export async function getDisruptions(userId) {
   const snap = await getDocs(collection(db, "users", userId, "disruptions"));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
+
+export async function savePolicy(userId, policy) {
+  const ref = doc(db, "users", userId, "policies", policy.id || Date.now().toString());
+  await setDoc(ref, policy);
+}
+
+export async function getPolicies(userId) {
+  const snap = await getDocs(collection(db, "users", userId, "policies"));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}

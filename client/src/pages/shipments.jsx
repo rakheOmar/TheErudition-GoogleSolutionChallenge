@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
+import { useAuth } from "../lib/auth-context";
+import { saveShipment } from "../lib/firebase";
 
 const ACTION_COLORS = {
   continue_with_watch: "bg-[rgba(0,153,255,0.15)] text-[#0099ff]",
@@ -9,6 +11,7 @@ const ACTION_COLORS = {
 };
 
 export function ShipmentsPage({ onRefresh }) {
+  const { user } = useAuth();
   const [shipments, setShipments] = useState([]);
   const [corridors, setCorridors] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -18,6 +21,7 @@ export function ShipmentsPage({ onRefresh }) {
   const [submitting, setSubmitting] = useState(false);
   const [explanations, setExplanations] = useState({});
   const [explaining, setExplaining] = useState(null);
+  const [aiStatus, setAiStatus] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -41,7 +45,7 @@ export function ShipmentsPage({ onRefresh }) {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 120000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -49,11 +53,14 @@ export function ShipmentsPage({ onRefresh }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await supplyChainApi.createShipment({
+      const created = await supplyChainApi.createShipment({
         corridor_id: form.corridor_id,
         load_profile_id: form.load_profile_id,
         sla_eta_h: Number(form.sla_eta_h),
       });
+      if (user?.uid && created?.shipment?.id) {
+        await saveShipment(user.uid, created);
+      }
       await load();
       onRefresh?.();
     } catch (e) {
@@ -64,7 +71,10 @@ export function ShipmentsPage({ onRefresh }) {
 
   async function handleRecompute(id) {
     try {
-      await supplyChainApi.recomputeShipment(id);
+      const updated = await supplyChainApi.recomputeShipment(id);
+      if (user?.uid && updated?.shipment?.id) {
+        await saveShipment(user.uid, updated);
+      }
       await load();
     } catch (e) {
       console.error("Recompute failed", e);
@@ -72,13 +82,17 @@ export function ShipmentsPage({ onRefresh }) {
   }
 
   async function handleExplain(id) {
+    setSelected(id);
+    setAiStatus("");
     setExplaining(id);
     try {
       const data = await supplyChainApi.explainShipment(id);
       setExplanations(prev => ({ ...prev, [id]: data.explanation }));
+      setAiStatus(data.explanation || "AI explanation generated");
     } catch (e) {
       console.error("Explanation failed", e);
       setExplanations(prev => ({ ...prev, [id]: "Failed to get explanation" }));
+      setAiStatus("AI explanation failed. Check backend/GEMINI_API_KEY.");
     }
     setExplaining(null);
   }
@@ -158,6 +172,11 @@ export function ShipmentsPage({ onRefresh }) {
             Refresh
           </button>
         </div>
+        {aiStatus && (
+          <div className="mb-3 rounded-[10px] border border-[rgba(0,153,255,0.2)] bg-[rgba(0,153,255,0.06)] px-3 py-2 text-[12px] text-[#a6a6a6]">
+            {aiStatus}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[14px]">
             <thead>
@@ -215,7 +234,7 @@ export function ShipmentsPage({ onRefresh }) {
                         disabled={explaining === s.shipment.id}
                         onClick={(e) => { e.stopPropagation(); handleExplain(s.shipment.id); }}
                       >
-                        {explaining === s.shipment.id ? "..." : "AI"}
+                        {explaining === s.shipment.id ? "..." : explanations[s.shipment.id] ? "AI ✓" : "AI"}
                       </button>
                     </div>
                   </td>

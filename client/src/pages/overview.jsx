@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
 
+const POLL_INTERVAL_MS = 120000;
+
 export function OverviewPage({ onRefresh }) {
   const [overview, setOverview] = useState(null);
   const [shipments, setShipments] = useState([]);
@@ -8,22 +10,37 @@ export function OverviewPage({ onRefresh }) {
   const [policies, setPolicies] = useState([]);
   const [corridors, setCorridors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [kpis, setKpis] = useState(null);
+  const [predictiveRisks, setPredictiveRisks] = useState([]);
+  const [forecast, setForecast] = useState([]);
+  const [whatIf, setWhatIf] = useState(null);
+  const [copilotPrompt, setCopilotPrompt] = useState("show top 5 at-risk shipments");
+  const [copilotResult, setCopilotResult] = useState(null);
+  const [copilotLoading, setCopilotLoading] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [runningHero, setRunningHero] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ov, sh, dis, pol, cor] = await Promise.all([
+      const [ov, sh, dis, pol, cor, kpiData, riskData, forecastData] = await Promise.all([
         supplyChainApi.overview(),
         supplyChainApi.shipments(),
         supplyChainApi.disruptions(),
         supplyChainApi.policies(),
         supplyChainApi.corridors(),
+        supplyChainApi.analyticsKpis(),
+        supplyChainApi.predictiveRisks(),
+        supplyChainApi.riskForecast(),
       ]);
       setOverview(ov);
       setShipments(sh);
       setDisruptions(dis);
       setPolicies(pol);
       setCorridors(cor);
+      setKpis(kpiData);
+      setPredictiveRisks(riskData);
+      setForecast(forecastData);
     } catch (e) {
       console.error("Load failed", e);
     }
@@ -32,9 +49,51 @@ export function OverviewPage({ onRefresh }) {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [load]);
+
+  async function handleAutoExecute() {
+    setExecuting(true);
+    try {
+      await supplyChainApi.autoExecuteRecommendations(0.85, 5);
+      await load();
+    } catch (e) {
+      console.error("Auto execute failed", e);
+    }
+    setExecuting(false);
+  }
+
+  async function handleWhatIf() {
+    try {
+      const data = await supplyChainApi.simulateWorsening(1.3);
+      setWhatIf(data);
+    } catch (e) {
+      console.error("What-if failed", e);
+    }
+  }
+
+  async function handleCopilot() {
+    setCopilotLoading(true);
+    try {
+      const data = await supplyChainApi.copilotChat(copilotPrompt);
+      setCopilotResult(data);
+    } catch (e) {
+      console.error("Copilot failed", e);
+    }
+    setCopilotLoading(false);
+  }
+
+  async function handleRunHeroDemo() {
+    setRunningHero(true);
+    try {
+      await supplyChainApi.runHeroDemo();
+      await load();
+    } catch (e) {
+      console.error("Hero demo failed", e);
+    }
+    setRunningHero(false);
+  }
 
   const riskStats = { low: 0, medium: 0, high: 0, critical: 0 };
   shipments.forEach((s) => {
@@ -125,6 +184,133 @@ export function OverviewPage({ onRefresh }) {
           <p className="mt-3 text-[14px] text-[#a6a6a6]">
             cities connected
           </p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-4">
+        <div className="rounded-[15px] bg-[#090909] p-5 framer-ring">
+          <p className="text-[12px] uppercase tracking-[0.21px] text-[#0099ff]">At-risk Shipments</p>
+          <p className="mt-2 text-[34px] text-white font-[500]">{kpis?.at_risk_shipments || 0}</p>
+        </div>
+        <div className="rounded-[15px] bg-[#090909] p-5 framer-ring">
+          <p className="text-[12px] uppercase tracking-[0.21px] text-[#ffaa00]">Reroute Recos</p>
+          <p className="mt-2 text-[34px] text-white font-[500]">{kpis?.reroute_recommendations || 0}</p>
+        </div>
+        <div className="rounded-[15px] bg-[#090909] p-5 framer-ring">
+          <p className="text-[12px] uppercase tracking-[0.21px] text-[#ff4444]">SLA Gap Hours</p>
+          <p className="mt-2 text-[34px] text-white font-[500]">{kpis?.sla_gap_hours_total || 0}</p>
+        </div>
+        <div className="rounded-[15px] bg-[#090909] p-5 framer-ring">
+          <p className="text-[12px] uppercase tracking-[0.21px] text-[#00ff88]">Auto Actions</p>
+          <p className="mt-2 text-[34px] text-white font-[500]">{kpis?.auto_actions_executed || 0}</p>
+        </div>
+      </div>
+
+      <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="font-[500] text-[18px] text-white">Preemptive Risk Radar</h3>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-[10px] border border-[rgba(0,153,255,0.4)] px-3 py-2 text-[13px] text-[#0099ff] disabled:opacity-50"
+              disabled={runningHero}
+              onClick={handleRunHeroDemo}
+              type="button"
+            >
+              {runningHero ? "Running Demo..." : "Run Hero Demo"}
+            </button>
+            <button
+              className="rounded-[10px] bg-[#0099ff] px-3 py-2 text-[13px] text-white disabled:opacity-50"
+              disabled={executing}
+              onClick={handleAutoExecute}
+              type="button"
+            >
+              {executing ? "Executing..." : "Auto-execute High Confidence"}
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {predictiveRisks.length === 0 && <p className="text-[#a6a6a6] text-[14px]">No high-risk corridors predicted.</p>}
+          {predictiveRisks.map((item) => (
+            <div className="rounded-[10px] border border-[rgba(0,153,255,0.15)] p-3" key={item.corridor_id}>
+              <p className="text-white text-[14px]">{item.corridor_name}</p>
+              <p className="text-[#a6a6a6] text-[12px]">{item.corridor_id}</p>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[12px] text-[#a6a6a6] uppercase">{item.risk_band}</span>
+                <span className="text-[14px] font-[500] text-[#ffaa00]">{item.predicted_risk}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="font-[500] text-[18px] text-white">Likely To Fail SLA Soon</h3>
+            <button
+              className="rounded-[10px] border border-[rgba(0,153,255,0.2)] px-3 py-1 text-[12px] text-[#a6a6a6]"
+              onClick={handleWhatIf}
+              type="button"
+            >
+              Run +30% What-if
+            </button>
+          </div>
+          <div className="space-y-2">
+            {forecast.slice(0, 4).map((item) => (
+              <div className="rounded-[10px] border border-[rgba(255,170,0,0.2)] p-3" key={item.corridor_id}>
+                <div className="flex items-center justify-between">
+                  <p className="text-white text-[14px]">{item.corridor_name}</p>
+                  <span className="text-[#ffaa00] text-[12px]">12h fail prob {(item.forecast?.[2]?.probability_sla_failure * 100).toFixed(0)}%</span>
+                </div>
+                <p className="mt-1 text-[12px] text-[#a6a6a6]">
+                  Drivers: {(item.drivers || []).slice(0, 3).map((d) => `${d.name} ${Math.round(d.weight * 100)}%`).join(", ")}
+                </p>
+              </div>
+            ))}
+            {forecast.length === 0 && <p className="text-[14px] text-[#a6a6a6]">No significant forecasted SLA risk.</p>}
+          </div>
+          {whatIf && (
+            <div className="mt-4 rounded-[10px] bg-[#0a0a0a] p-3 text-[13px] text-[#a6a6a6]">
+              Impacted: <span className="text-white">{whatIf.impacted_count}</span> | SLA hours at risk: <span className="text-white">{whatIf.estimated_sla_hours_at_risk}</span> | Est. saved if actioned: <span className="text-[#00ff88]">{whatIf.estimated_sla_hours_saved_if_actioned}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+          <h3 className="mb-4 font-[500] text-[18px] text-white">Ops Copilot</h3>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 rounded-[10px] border border-[rgba(0,153,255,0.15)] bg-[#0a0a0a] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
+              onChange={(e) => setCopilotPrompt(e.target.value)}
+              value={copilotPrompt}
+            />
+            <button
+              className="rounded-[10px] bg-[#0099ff] px-4 py-2 text-[13px] text-white disabled:opacity-50"
+              disabled={copilotLoading}
+              onClick={handleCopilot}
+              type="button"
+            >
+              {copilotLoading ? "Thinking..." : "Ask"}
+            </button>
+          </div>
+          {copilotResult?.intent === "top_risk_shipments" && Array.isArray(copilotResult?.data) && (
+            <div className="mt-3 space-y-2">
+              {copilotResult.data.map((item) => (
+                <div className="flex items-center justify-between rounded-[10px] bg-[#0a0a0a] p-3" key={item.shipment_id}>
+                  <div>
+                    <p className="font-mono text-[12px] text-white">{item.shipment_id}</p>
+                    <p className="text-[12px] text-[#a6a6a6]">{String(item.action || "-").replace(/_/g, " ")}</p>
+                  </div>
+                  <span className="text-[14px] font-[500] text-[#ff4444]">Risk {Number(item.risk || 0).toFixed(1)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {copilotResult && !(copilotResult?.intent === "top_risk_shipments" && Array.isArray(copilotResult?.data)) && (
+            <pre className="mt-3 overflow-x-auto rounded-[10px] bg-[#0a0a0a] p-3 text-[12px] text-[#a6a6a6]">
+              {JSON.stringify(copilotResult, null, 2)}
+            </pre>
+          )}
         </div>
       </div>
 

@@ -68,4 +68,31 @@ export const supplyChainApi = {
     request("/supply-chain/enrich/maps", { method: "POST" }),
   getWeather: (nodeId) => request(`/supply-chain/weather/${nodeId}`),
   explainShipment: (shipmentId) => request(`/supply-chain/explain/${shipmentId}`),
+  predictiveRisks: () => request("/supply-chain/risks/predictive"),
+  riskForecast: () => request("/supply-chain/risks/forecast"),
+  analyticsKpis: () => request("/supply-chain/analytics/kpis"),
+  autoExecuteRecommendations: (confidenceThreshold = 0.85, riskThreshold = 5) =>
+    request(
+      `/supply-chain/recommendations/auto-execute?confidence_threshold=${confidenceThreshold}&risk_threshold=${riskThreshold}`,
+      { method: "POST" },
+    ),
+  aiPolicySuggestions: (ttlHours = 3) =>
+    request(`/supply-chain/policies/ai-suggestions?ttl_hours=${ttlHours}`),
+  approveAiPolicy: (payload) =>
+    request("/supply-chain/policies/ai-approve", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  simulateWorsening: (factor = 1.3) =>
+    request(`/supply-chain/simulate/disruption-worsen?factor=${factor}`, {
+      method: "POST",
+    }),
+  copilotChat: (prompt) =>
+    request("/supply-chain/copilot/chat", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }),
+  incidentTimeline: (disruptionId) =>
+    request(`/supply-chain/incidents/${disruptionId}/timeline`),
+  runHeroDemo: () => request("/supply-chain/demo/hero", { method: "POST" }),
 };

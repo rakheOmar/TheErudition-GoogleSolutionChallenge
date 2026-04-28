@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
+import { useAuth } from "../lib/auth-context";
+import { saveDisruption } from "../lib/firebase";
 
 const EVENT_TYPES = [
   { value: "weather_alert", label: "Weather Alert" },
@@ -23,6 +25,7 @@ const TARGET_TYPES = [
 ];
 
 export function DisruptionsPage({ onRefresh }) {
+  const { user } = useAuth();
   const [disruptions, setDisruptions] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
@@ -37,6 +40,7 @@ export function DisruptionsPage({ onRefresh }) {
     risk_delta: "1.2",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [selectedIncident, setSelectedIncident] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,7 +63,7 @@ export function DisruptionsPage({ onRefresh }) {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 120000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -67,7 +71,7 @@ export function DisruptionsPage({ onRefresh }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await supplyChainApi.createDisruption({
+      const created = await supplyChainApi.createDisruption({
         event_type: form.event_type,
         severity: form.severity,
         target_type: form.target_type,
@@ -76,6 +80,9 @@ export function DisruptionsPage({ onRefresh }) {
         risk_delta: Number(form.risk_delta),
         active: true,
       });
+      if (user?.uid && created?.id) {
+        await saveDisruption(user.uid, created);
+      }
       setForm((f) => ({ ...f, target_value: "" }));
       await load();
       onRefresh?.();
@@ -230,11 +237,24 @@ export function DisruptionsPage({ onRefresh }) {
                 <button
                   className="rounded-[8px] border border-[rgba(255,68,68,0.3)] px-3 py-1 text-[12px] text-[#ff4444] hover:bg-[rgba(255,68,68,0.1)]"
                   onClick={async () => {
-                    await supplyChainApi.updateDisruption(d.id, { active: false });
+                    const updated = await supplyChainApi.updateDisruption(d.id, { active: false });
+                    if (user?.uid && updated?.id) {
+                      await saveDisruption(user.uid, updated);
+                    }
                     await load();
                   }}
                 >
                   Resolve
+                </button>
+                <button
+                  className="ml-2 rounded-[8px] border border-[rgba(0,153,255,0.3)] px-3 py-1 text-[12px] text-[#0099ff] hover:bg-[rgba(0,153,255,0.1)]"
+                  onClick={async () => {
+                    const timeline = await supplyChainApi.incidentTimeline(d.id);
+                    setSelectedIncident(timeline);
+                  }}
+                  type="button"
+                >
+                  Timeline
                 </button>
               </div>
             </div>
@@ -244,6 +264,21 @@ export function DisruptionsPage({ onRefresh }) {
           )}
         </div>
       </div>
+
+      {selectedIncident && (
+        <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+          <h3 className="mb-2 font-[500] text-[18px] text-white">Incident Timeline: {selectedIncident.disruption_id}</h3>
+          <p className="mb-4 text-[14px] text-[#a6a6a6]">{selectedIncident.ai_summary}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(selectedIncident.timeline || []).map((step) => (
+              <div className="rounded-[10px] border border-[rgba(0,153,255,0.12)] p-3" key={step.phase}>
+                <p className="text-[12px] uppercase text-[#0099ff]">{step.phase}</p>
+                <p className="text-[13px] text-[#a6a6a6]">{step.note}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

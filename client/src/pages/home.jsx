@@ -30,7 +30,7 @@ export function HomePage() {
 
   useEffect(() => {
     loadStats();
-    const interval = setInterval(loadStats, 5000);
+    const interval = setInterval(loadStats, 120000);
     return () => clearInterval(interval);
   }, [loadStats]);
 

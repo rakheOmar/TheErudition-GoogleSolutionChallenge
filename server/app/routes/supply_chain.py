@@ -52,7 +52,7 @@ async def get_disruptions():
 
 @router.post("/disruptions")
 async def create_disruption(request: DisruptionCreateRequest):
-    return supply_chain_service.create_disruption(request)
+    return await supply_chain_service.create_disruption(request)
 
 
 @router.patch("/disruptions/{disruption_id}")
@@ -149,6 +149,63 @@ async def get_node_weather(node_id: str):
     return await supply_chain_service.get_weather_for_node(node_id)
 
 
+@router.get("/risks/predictive")
+async def get_predictive_risks():
+    return supply_chain_service.predictive_risks()
+
+
+@router.get("/risks/forecast")
+async def get_risk_forecast():
+    return supply_chain_service.proactive_risk_forecast()
+
+
+@router.get("/analytics/kpis")
+async def get_analytics_kpis():
+    return supply_chain_service.analytics_kpis()
+
+
+@router.post("/recommendations/auto-execute")
+async def auto_execute_recommendations(
+    confidence_threshold: float = Query(default=0.85, ge=0.4, le=0.99),
+    risk_threshold: float = Query(default=5.0, ge=0.0, le=10.0),
+):
+    return supply_chain_service.auto_execute_recommendations(
+        confidence_threshold=confidence_threshold,
+        risk_threshold=risk_threshold,
+    )
+
+
+@router.get("/policies/ai-suggestions")
+async def get_ai_policy_suggestions(ttl_hours: int = Query(default=3, ge=1, le=24)):
+    return await supply_chain_service.suggest_auto_policies(ttl_hours=ttl_hours)
+
+
+@router.post("/policies/ai-approve")
+async def approve_ai_policy(payload: dict):
+    return supply_chain_service.approve_policy_suggestion(payload)
+
+
+@router.post("/simulate/disruption-worsen")
+async def simulate_disruption_worsen(factor: float = Query(default=1.3, ge=1.0, le=2.5)):
+    return supply_chain_service.simulate_disruption_worsening(factor=factor)
+
+
+@router.post("/copilot/chat")
+async def copilot_chat(payload: dict):
+    prompt = str(payload.get("prompt", "")).strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    return await supply_chain_service.copilot_chat(prompt)
+
+
+@router.get("/incidents/{disruption_id}/timeline")
+async def get_incident_timeline(disruption_id: str):
+    data = await supply_chain_service.incident_timeline(disruption_id)
+    if "error" in data:
+        raise HTTPException(status_code=404, detail=data["error"])
+    return data
+
+
 @router.get("/explain/{shipment_id}")
 async def explain_shipment(shipment_id: str):
     try:
@@ -170,3 +227,8 @@ async def explain_shipment(shipment_id: str):
 @router.post("/disruptions/auto-from-weather")
 async def auto_create_weather_disruptions():
     return await supply_chain_service.check_weather_and_create_disruptions()
+
+
+@router.post("/demo/hero")
+async def run_hero_demo():
+    return await supply_chain_service.run_hero_demo()

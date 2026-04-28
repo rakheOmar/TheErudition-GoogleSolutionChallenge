@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
+import { useAuth } from "../lib/auth-context";
+import { savePolicy } from "../lib/firebase";
 
 const OWNER_TYPES = [
   { value: "network_admin", label: "Network Admin" },
@@ -16,6 +18,7 @@ const RULE_TYPES = [
 ];
 
 export function PoliciesPage({ onRefresh }) {
+  const { user } = useAuth();
   const [policies, setPolicies] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
@@ -28,6 +31,7 @@ export function PoliciesPage({ onRefresh }) {
     enabled: true,
   });
   const [submitting, setSubmitting] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,9 +41,11 @@ export function PoliciesPage({ onRefresh }) {
         supplyChainApi.nodes(),
         supplyChainApi.edges(),
       ]);
+      const suggestions = await supplyChainApi.aiPolicySuggestions(3);
       setPolicies(p);
       setNodes(n);
       setEdges(e);
+      setAiSuggestions(suggestions);
     } catch (err) {
       console.error("Load failed", err);
     }
@@ -48,7 +54,7 @@ export function PoliciesPage({ onRefresh }) {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 120000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -57,13 +63,16 @@ export function PoliciesPage({ onRefresh }) {
     if (!form.target_id) return;
     setSubmitting(true);
     try {
-      await supplyChainApi.createPolicy({
+      const created = await supplyChainApi.createPolicy({
         owner_type: form.owner_type,
         rule_type: form.rule_type,
         applies_to: [form.target_id],
         priority: Number(form.priority),
         enabled: form.enabled,
       });
+      if (user?.uid && created?.id) {
+        await savePolicy(user.uid, created);
+      }
       setForm((f) => ({ ...f, target_id: "" }));
       await load();
       onRefresh?.();
@@ -75,7 +84,10 @@ export function PoliciesPage({ onRefresh }) {
 
   async function handleToggle(policy) {
     try {
-      await supplyChainApi.updatePolicy(policy.id, { enabled: !policy.enabled });
+      const updated = await supplyChainApi.updatePolicy(policy.id, { enabled: !policy.enabled });
+      if (user?.uid && updated?.id) {
+        await savePolicy(user.uid, updated);
+      }
       await load();
     } catch (err) {
       console.error("Toggle failed", err);
@@ -107,6 +119,36 @@ export function PoliciesPage({ onRefresh }) {
   return (
     <div className="grid gap-6">
       <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+        <h3 className="mb-4 font-[500] text-[18px] text-white">AI Policy Suggestions</h3>
+        <div className="mb-6 grid gap-3">
+          {aiSuggestions.map((s) => (
+            <div className="rounded-[10px] border border-[rgba(0,153,255,0.15)] p-4" key={s.suggestion_id}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[14px] text-white">{s.title}</p>
+                  <p className="mt-1 text-[12px] text-[#a6a6a6]">Confidence {(s.confidence * 100).toFixed(0)}% • TTL {s.params?.ttl_hours}h</p>
+                </div>
+                <button
+                  className="rounded-[8px] bg-[#0099ff] px-3 py-1 text-[12px] text-white"
+                  onClick={async () => {
+                    const created = await supplyChainApi.approveAiPolicy(s);
+                    if (user?.uid && created?.id) {
+                      await savePolicy(user.uid, created);
+                    }
+                    await load();
+                  }}
+                  type="button"
+                >
+                  Approve
+                </button>
+              </div>
+            </div>
+          ))}
+          {aiSuggestions.length === 0 && (
+            <div className="text-[13px] text-[#a6a6a6]">No urgent AI policy suggestions right now.</div>
+          )}
+        </div>
+
         <h3 className="mb-4 font-[500] text-[18px] text-white">Create Policy</h3>
         <form className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" onSubmit={handleCreate}>
           <div>
