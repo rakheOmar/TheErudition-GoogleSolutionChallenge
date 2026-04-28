@@ -1,23 +1,37 @@
 import { useEffect, useState } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
+import { LogisticsMap } from "../components/logistics-map";
 
 export function NetworkPage({ onRefresh }) {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [corridors, setCorridors] = useState([]);
+  const [shipments, setShipments] = useState([]);
+  const [disruptions, setDisruptions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    showRoutes: true,
+    showNodes: true,
+    showShipments: true,
+    showDisruptions: true,
+    selectedCorridor: "all",
+  });
 
   async function load() {
     setLoading(true);
     try {
-      const [n, e, c] = await Promise.all([
+      const [n, e, c, s, d] = await Promise.all([
         supplyChainApi.nodes(),
         supplyChainApi.edges(),
         supplyChainApi.corridors(),
+        supplyChainApi.shipments(),
+        supplyChainApi.disruptions(),
       ]);
       setNodes(n);
       setEdges(e);
       setCorridors(c);
+      setShipments(s);
+      setDisruptions(d);
     } catch (e) {
       console.error("Load failed", e);
     }
@@ -28,24 +42,25 @@ export function NetworkPage({ onRefresh }) {
     load();
   }, []);
 
-  const nodeCount = nodes.length;
-  const edgeCount = edges.length;
-  const totalDistance = edges.reduce((sum, e) => sum + (e.distance_km || 0), 0);
+  const filteredNodes = filters.selectedCorridor === "all" 
+    ? nodes 
+    : nodes.filter(n => {
+        const corr = corridors.find(c => c.id === filters.selectedCorridor);
+        return corr && (corr.source_node === n.id || corr.destination_node === n.id);
+      });
 
-  const carriers = [...new Set(edges.map((e) => e.carrier))];
-  const carrierStats = carriers.map((c) => ({
-    name: c,
-    count: edges.filter((e) => e.carrier === c).length,
-  }));
-
-  const stateNodes = nodes.reduce((acc, n) => {
-    acc[n.state] = (acc[n.state] || 0) + 1;
-    return acc;
-  }, {});
+  const filteredEdges = filters.selectedCorridor === "all"
+    ? edges
+    : edges.filter(e => {
+        const corr = corridors.find(c => c.id === filters.selectedCorridor);
+        if (!corr) return false;
+        return (e.from_node === corr.source_node && e.to_node === corr.destination_node) ||
+               (e.from_node === corr.destination_node && e.to_node === corr.source_node);
+      });
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-12 text-slate-500">
+      <div className="flex items-center justify-center p-12 text-[#a6a6a6]">
         Loading network...
       </div>
     );
@@ -53,170 +68,94 @@ export function NetworkPage({ onRefresh }) {
 
   return (
     <div className="grid gap-6">
-      <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50 p-6 shadow-sm">
-        <h2 className="mb-4 font-semibold text-slate-800 text-xl">
-          India Pharma Distribution Network
-        </h2>
-        <div className="relative h-96 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <svg
-            className="absolute inset-0 h-full w-full"
-            preserveAspectRatio="xMidYMid meet"
-            viewBox="0 0 100 100"
-          >
-            {edges.map((edge, i) => {
-              const fromNode = nodes.find((n) => n.id === edge.from_node);
-              const toNode = nodes.find((n) => n.id === edge.to_node);
-              if (!(fromNode && toNode)) {
-                return null;
-              }
-              const x1 = ((fromNode.lng - 68) / 24) * 90 + 5;
-              const y1 = ((28 - fromNode.lat) / 16) * 80 + 10;
-              const x2 = ((toNode.lng - 68) / 24) * 90 + 5;
-              const y2 = ((28 - toNode.lat) / 16) * 80 + 10;
-              return (
-                <line
-                  key={i}
-                  stroke="#94a3b8"
-                  strokeDasharray={
-                    edge.carrier === "coldswift" ? "1,0.5" : "none"
-                  }
-                  strokeWidth="0.3"
-                  x1={x1}
-                  x2={x2}
-                  y1={y1}
-                  y2={y2}
-                />
-              );
-            })}
-            {nodes.map((node, i) => {
-              const x = ((node.lng - 68) / 24) * 90 + 5;
-              const y = ((28 - node.lat) / 16) * 80 + 10;
-              const corridorCount = corridors.filter(
-                (c) =>
-                  c.source_node === node.id || c.destination_node === node.id
-              ).length;
-              const size = Math.max(2, Math.min(5, 2 + corridorCount));
-              return (
-                <g key={i}>
-                  <circle
-                    cx={x}
-                    cy={y}
-                    fill={corridorCount > 2 ? "#0891b2" : "#64748b"}
-                    r={size}
-                  />
-                  <text
-                    fill="#334155"
-                    fontSize="2.5"
-                    fontWeight="500"
-                    x={x + size + 1}
-                    y={y + 0.5}
-                  >
-                    {node.name}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-          <div className="absolute right-2 bottom-2 rounded bg-white/90 p-2 text-slate-600 text-xs">
-            Blue: Major hub (3+ corridors) | Gray: Standard node
-          </div>
-        </div>
+      <div className="flex gap-4 flex-wrap items-center">
+        <select
+          value={filters.selectedCorridor}
+          onChange={(e) => setFilters(f => ({ ...f, selectedCorridor: e.target.value }))}
+          className="rounded-[10px] bg-[#090909] border border-[rgba(0,153,255,0.15)] px-4 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
+        >
+          <option value="all">All Corridors</option>
+          {corridors.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+
+        <label className="flex items-center gap-2 text-[14px] text-[#a6a6a6]">
+          <input
+            type="checkbox"
+            checked={filters.showRoutes}
+            onChange={(e) => setFilters(f => ({ ...f, showRoutes: e.target.checked }))}
+            className="accent-[#0099ff]"
+          />
+          Routes
+        </label>
+        <label className="flex items-center gap-2 text-[14px] text-[#a6a6a6]">
+          <input
+            type="checkbox"
+            checked={filters.showNodes}
+            onChange={(e) => setFilters(f => ({ ...f, showNodes: e.target.checked }))}
+            className="accent-[#0099ff]"
+          />
+          Nodes
+        </label>
+        <label className="flex items-center gap-2 text-[14px] text-[#a6a6a6]">
+          <input
+            type="checkbox"
+            checked={filters.showDisruptions}
+            onChange={(e) => setFilters(f => ({ ...f, showDisruptions: e.target.checked }))}
+            className="accent-[#0099ff]"
+          />
+          Disruptions
+        </label>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-3 font-semibold text-slate-800">
-            Network Statistics
-          </h3>
+      <div className="rounded-[15px] bg-[#090909] p-1 framer-ring" style={{ height: "500px" }}>
+        <LogisticsMap
+          nodes={filters.showNodes ? filteredNodes : []}
+          edges={filters.showRoutes ? filteredEdges : []}
+          shipments={filters.showShipments ? shipments : []}
+          disruptions={filters.showDisruptions ? disruptions.filter(d => d.active) : []}
+        />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+          <h3 className="mb-4 font-[500] text-[18px] text-white">Network Stats</h3>
           <div className="space-y-3">
-            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2">
-              <span className="text-slate-600">Total Nodes (Cities)</span>
-              <span className="font-bold text-slate-800">{nodeCount}</span>
+            <div className="flex justify-between">
+              <span className="text-[14px] text-[#a6a6a6]">Total Nodes</span>
+              <span className="text-[14px] text-white font-[500]">{nodes.length}</span>
             </div>
-            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2">
-              <span className="text-slate-600">Total Routes (Edges)</span>
-              <span className="font-bold text-slate-800">{edgeCount}</span>
+            <div className="flex justify-between">
+              <span className="text-[14px] text-[#a6a6a6]">Total Routes</span>
+              <span className="text-[14px] text-white font-[500]">{edges.length}</span>
             </div>
-            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2">
-              <span className="text-slate-600">Total Distance</span>
-              <span className="font-bold text-slate-800">
-                {totalDistance.toLocaleString()} km
-              </span>
+            <div className="flex justify-between">
+              <span className="text-[14px] text-[#a6a6a6]">Total Distance</span>
+              <span className="text-[14px] text-white font-[500]">{edges.reduce((s, e) => s + (e.distance_km || 0), 0).toLocaleString()} km</span>
             </div>
-            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2">
-              <span className="text-slate-600">Active Corridors</span>
-              <span className="font-bold text-slate-800">
-                {corridors.length}
-              </span>
+            <div className="flex justify-between">
+              <span className="text-[14px] text-[#a6a6a6]">Active Corridors</span>
+              <span className="text-[14px] text-white font-[500]">{corridors.length}</span>
             </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-3 font-semibold text-slate-800">
-            🚛 Carrier Distribution
-          </h3>
-          <div className="space-y-2">
-            {carrierStats.map((c) => (
-              <div className="flex items-center justify-between" key={c.name}>
-                <span className="text-slate-700 text-sm capitalize">
-                  {c.name}
-                </span>
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-24 rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-cyan-500"
-                      style={{ width: `${(c.count / edgeCount) * 100}%` }}
-                    />
-                  </div>
-                  <span className="w-6 text-slate-600 text-xs">{c.count}</span>
+        <div className="rounded-[15px] bg-[#090909] p-6 framer-ring lg:col-span-2">
+          <h3 className="mb-4 font-[500] text-[18px] text-white">Corridors</h3>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {corridors.map(c => {
+              const sCount = shipments.filter(s => s.shipment?.corridor_id === c.id).length;
+              return (
+                <div key={c.id} className="flex items-center justify-between rounded-[10px] border border-[rgba(0,153,255,0.1)] p-3">
+                  <span className="text-[14px] text-white">{c.name}</span>
+                  <span className={`rounded-[100px] px-3 py-1 text-[12px] ${sCount > 0 ? "bg-[rgba(0,153,255,0.15)] text-[#0099ff]" : "bg-[rgba(166,166,166,0.1)] text-[#a6a6a6]"}`}>
+                    {sCount} shipments
+                  </span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-3 font-semibold text-slate-800">State Coverage</h3>
-          <div className="space-y-2">
-            {Object.entries(stateNodes).map(([state, count]) => (
-              <div className="flex items-center justify-between" key={state}>
-                <span className="truncate text-slate-700 text-sm">{state}</span>
-                <span className="font-medium text-cyan-700">{count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-3 font-semibold text-slate-800">All Routes</h3>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {edges.map((edge) => {
-            const fromNode = nodes.find((n) => n.id === edge.from_node);
-            const toNode = nodes.find((n) => n.id === edge.to_node);
-            return (
-              <div
-                className="flex items-center justify-between rounded-lg border border-slate-100 p-3"
-                key={edge.id}
-              >
-                <div>
-                  <p className="font-medium text-slate-800 text-sm">
-                    {fromNode?.name} → {toNode?.name}
-                  </p>
-                  <p className="text-slate-500 text-xs">
-                    {edge.distance_km.toFixed(2)} km • {edge.base_eta_h.toFixed(2)}h • Rs
-                    {(edge.base_cost / 1000).toFixed(0)}k
-                  </p>
-                </div>
-                <span
-                  className={`rounded-full px-2 py-1 text-xs ${edge.cold_chain_capable ? "bg-cyan-100 text-cyan-700" : "bg-slate-100 text-slate-500"}`}
-                >
-                  {edge.carrier}
-                </span>
-              </div>
-            );
-          })}
         </div>
       </div>
     </div>

@@ -197,14 +197,18 @@ class SupplyChainService:
         }
 
         load_profiles = {
-            "pharma_standard": LoadProfile(id="pharma_standard", label="Pharma 2-8°C", min_temp_c=2, max_temp_c=8, max_transit_h=30,
+            "cold_chain": LoadProfile(id="cold_chain", label="Cold Chain 2-8°C", min_temp_c=2, max_temp_c=8, max_transit_h=30,
                 weights={"eta": 0.35, "cost": 0.2, "sla": 0.25, "risk": 0.2}),
-            "vaccine_deepfreeze": LoadProfile(id="vaccine_deepfreeze", label="Vaccines -20°C", min_temp_c=-25, max_temp_c=-15, max_transit_h=24,
+            "frozen": LoadProfile(id="frozen", label="Frozen -18°C", min_temp_c=-25, max_temp_c=-15, max_transit_h=24,
                 weights={"eta": 0.45, "cost": 0.15, "sla": 0.25, "risk": 0.15}),
-            "insulin_cold": LoadProfile(id="insulin_cold", label="Insulin 2-8°C", min_temp_c=2, max_temp_c=8, max_transit_h=48,
+            "fragile": LoadProfile(id="fragile", label="Fragile", min_temp_c=2, max_temp_c=8, max_transit_h=48,
                 weights={"eta": 0.3, "cost": 0.25, "sla": 0.3, "risk": 0.15}),
-            "ambient": LoadProfile(id="ambient", label="Ambient 15-25°C", min_temp_c=15, max_temp_c=25, max_transit_h=72,
+            "standard": LoadProfile(id="standard", label="Standard", min_temp_c=15, max_temp_c=25, max_transit_h=72,
                 weights={"eta": 0.25, "cost": 0.3, "sla": 0.2, "risk": 0.25}),
+            "heavy": LoadProfile(id="heavy", label="Heavy Cargo", min_temp_c=0, max_temp_c=40, max_transit_h=96,
+                weights={"eta": 0.2, "cost": 0.4, "sla": 0.2, "risk": 0.2}),
+            "express": LoadProfile(id="express", label="Express", min_temp_c=0, max_temp_c=30, max_transit_h=12,
+                weights={"eta": 0.5, "cost": 0.3, "sla": 0.15, "risk": 0.05}),
         }
 
         policies = {
@@ -389,26 +393,26 @@ class SupplyChainService:
         profile_ids = list(self._state.load_profiles.keys())
 
         shipment_configs = [
-            ("corr_mumbai_pune", "pharma_standard", 4, "in_transit"),
-            ("corr_mumbai_nagpur", "vaccine_deepfreeze", 15, "in_transit"),
-            ("corr_delhi_lucknow", "pharma_standard", 12, "in_transit"),
-            ("corr_delhi_jaipur", "ambient", 8, "in_transit"),
-            ("corr_hyderabad_bengaluru", "insulin_cold", 20, "in_transit"),
-            ("corr_hyderabad_chennai", "pharma_standard", 14, "pending"),
-            ("corr_bengaluru_cochin", "vaccine_deepfreeze", 10, "in_transit"),
-            ("corr_kolkata_guwahati", "ambient", 25, "pending"),
-            ("corr_nagpur_hyderabad", "pharma_standard", 11, "in_transit"),
-            ("corr_surat_mumbai", "insulin_cold", 6, "in_transit"),
-            ("corr_indore_mumbai", "ambient", 18, "in_transit"),
-            ("corr_bengaluru_chennai", "pharma_standard", 9, "pending"),
-            ("corr_delhi_chandigarh", "pharma_standard", 5, "in_transit"),
-            ("corr_mumbai_ahmedabad", "vaccine_deepfreeze", 22, "in_transit"),
-            ("corr_kolkata_patna", "ambient", 7, "in_transit"),
-            ("corr_raipur_bhubaneswar", "pharma_standard", 13, "pending"),
-            ("corr_trivandrum_cochin", "insulin_cold", 3, "in_transit"),
-            ("corr_jaipur_ahmedabad", "ambient", 16, "in_transit"),
-            ("corr_visakhapatnam_hyderabad", "pharma_standard", 8, "pending"),
-            ("corr_lucknow_kanpur", "pharma_standard", 5, "in_transit"),
+            ("corr_mumbai_pune", "cold_chain", 4, "in_transit"),
+            ("corr_mumbai_nagpur", "frozen", 15, "in_transit"),
+            ("corr_delhi_lucknow", "express", 12, "in_transit"),
+            ("corr_delhi_jaipur", "standard", 8, "in_transit"),
+            ("corr_hyderabad_bengaluru", "fragile", 20, "in_transit"),
+            ("corr_hyderabad_chennai", "cold_chain", 14, "pending"),
+            ("corr_bengaluru_cochin", "frozen", 10, "in_transit"),
+            ("corr_kolkata_guwahati", "heavy", 25, "pending"),
+            ("corr_nagpur_hyderabad", "standard", 11, "in_transit"),
+            ("corr_surat_mumbai", "fragile", 6, "in_transit"),
+            ("corr_indore_mumbai", "standard", 18, "in_transit"),
+            ("corr_bengaluru_chennai", "express", 9, "pending"),
+            ("corr_delhi_chandigarh", "cold_chain", 5, "in_transit"),
+            ("corr_mumbai_ahmedabad", "heavy", 22, "in_transit"),
+            ("corr_kolkata_patna", "standard", 7, "in_transit"),
+            ("corr_raipur_bhubaneswar", "cold_chain", 13, "pending"),
+            ("corr_trivandrum_cochin", "fragile", 3, "in_transit"),
+            ("corr_jaipur_ahmedabad", "heavy", 16, "in_transit"),
+            ("corr_visakhapatnam_hyderabad", "express", 8, "pending"),
+            ("corr_lucknow_kanpur", "standard", 5, "in_transit"),
         ]
 
         for corridor, profile, sla, status in shipment_configs:
@@ -432,27 +436,56 @@ class SupplyChainService:
         if self._state.shipments:
             return {"status": "skipped", "message": "Shipments already exist. Reset first."}
 
-        corridor_ids = list(self._state.corridors.keys())
         profile_ids = list(self._state.load_profiles.keys())
         edge_ids = list(self._state.edges.keys())
         statuses = ["in_transit", "pending", "delivered"]
         sla_range = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+
+        priority_corridors = [
+            "corr_bengaluru_chennai", "corr_bengaluru_cochin",
+            "corr_delhi_chandigarh", "corr_delhi_jaipur", "corr_delhi_lucknow",
+            "corr_hyderabad_bengaluru"
+        ]
+
+        distribution = [
+            ("corr_bengaluru_chennai", 3),
+            ("corr_bengaluru_cochin", 3),
+            ("corr_delhi_chandigarh", 4),
+            ("corr_delhi_jaipur", 3),
+            ("corr_delhi_lucknow", 4),
+            ("corr_hyderabad_bengaluru", 3),
+            ("corr_mumbai_pune", 2),
+            ("corr_mumbai_ahmedabad", 2),
+            ("corr_mumbai_nagpur", 2),
+            ("corr_hyderabad_chennai", 2),
+            ("corr_kolkata_guwahati", 2),
+            ("corr_kolkata_patna", 2),
+            ("corr_nagpur_hyderabad", 2),
+            ("corr_surat_mumbai", 2),
+            ("corr_indore_mumbai", 2),
+        ]
+
         created = 0
-        for i, corridor_id in enumerate(corridor_ids * 5):
+        for corridor_id, count in distribution:
             if created >= 50:
                 break
-            profile_id = profile_ids[i % len(profile_ids)]
-            sla = sla_range[i % len(sla_range)]
-            status = statuses[i % len(statuses)]
-            try:
-                self.create_shipment(ShipmentCreateRequest(
-                    corridor_id=corridor_id, load_profile_id=profile_id, sla_eta_h=sla))
-                if len(self._state.shipments) > 0:
-                    last_shipment = list(self._state.shipments.values())[-1]
-                    last_shipment.status = status
-                created += 1
-            except Exception:
-                pass
+            if corridor_id not in self._state.corridors:
+                continue
+            for j in range(count):
+                if created >= 50:
+                    break
+                profile_id = profile_ids[j % len(profile_ids)]
+                sla = sla_range[j % len(sla_range)]
+                status = statuses[j % len(statuses)]
+                try:
+                    self.create_shipment(ShipmentCreateRequest(
+                        corridor_id=corridor_id, load_profile_id=profile_id, sla_eta_h=sla))
+                    if len(self._state.shipments) > 0:
+                        last_shipment = list(self._state.shipments.values())[-1]
+                        last_shipment.status = status
+                    created += 1
+                except Exception:
+                    pass
 
         disruptions_data = [
             ("weather_alert", "high", "node", ["mumbai"], 1.5, 2.5),
