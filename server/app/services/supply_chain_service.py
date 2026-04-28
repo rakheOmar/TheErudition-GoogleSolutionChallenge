@@ -283,22 +283,22 @@ class SupplyChainService:
     def list_disruptions(self) -> list[ScenarioEvent]:
         return sorted(self._state.disruptions.values(), key=lambda item: item.id)
 
-    def create_disruption(self, request: DisruptionCreateRequest) -> ScenarioEvent:
+    async def create_disruption(self, request: DisruptionCreateRequest) -> ScenarioEvent:
         disruption_id = f"event_{next(self._event_counter)}"
         disruption = ScenarioEvent(id=disruption_id, **request.model_dump())
-            self._state.disruptions[disruption.id] = disruption
-            self._record_audit(
-                entity_type="disruption",
-                entity_id=disruption.id,
-                action="disruption_created",
-                details={
-                    "target_type": disruption.target_type,
-                    "severity": disruption.severity,
-                },
-            )
-            db.save_disruptions(self._state.disruptions)
-            await publish_disruption_created(disruption.model_dump())
-            return disruption
+        self._state.disruptions[disruption.id] = disruption
+        self._record_audit(
+            entity_type="disruption",
+            entity_id=disruption.id,
+            action="disruption_created",
+            details={
+                "target_type": disruption.target_type,
+                "severity": disruption.severity,
+            },
+        )
+        db.save_disruptions(self._state.disruptions)
+        await publish_disruption_created(disruption.model_dump())
+        return disruption
 
     def list_shipments(self) -> list[ShipmentWithRecommendation]:
         entries = []
@@ -351,7 +351,6 @@ class SupplyChainService:
             },
         )
         db.save_shipments(self._state.shipments)
-        await publish_shipment_updated(shipment.model_dump(), recommendation.model_dump())
         return ShipmentWithRecommendation(shipment=shipment, recommendation=recommendation)
 
     def recompute_shipment(self, shipment_id: str) -> ShipmentWithRecommendation:
