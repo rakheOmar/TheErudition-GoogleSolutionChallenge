@@ -25,31 +25,8 @@ The platform continuously monitors shipment risk, detects disruptions early, rec
 
 ## Architecture
 
-### High-level
+<img width="1276" height="655" alt="image" src="https://github.com/user-attachments/assets/95b4a6a1-2956-4b8b-b19e-0bd0ef56bb67" />
 
-1. **Frontend (React + Vite)**
-   - Pages: Home, Overview, Network, Shipments, Disruptions, Policies, Audit
-   - Polling-based refresh (2-minute interval)
-   - Calls backend REST APIs via `client/src/lib/supply-chain-api.js`
-   - Firebase Auth for sign-in / sign-up
-   - Firestore mirrors create/update actions for shipments, disruptions, policies
-
-2. **Backend (FastAPI, Python)**
-   - Core logic in `server/app/services/supply_chain_service.py`
-   - API routes in `server/app/routes/supply_chain.py`
-   - Local persistence with SQLite (`server/supply_chain.db` via `server/app/db.py`)
-   - Weather enrichment and disruption generation
-   - Recommendation scoring + policy constraint evaluation
-
-3. **Event Bus (RabbitMQ)**
-   - Event publisher: `server/app/events/event_bus.py`
-   - Publishes domain events such as shipment/disruption updates
-   - Enables event-driven extensibility (workers, notifications, downstream analytics)
-
-4. **AI Layer (Gemini integration)**
-   - AI service in `server/app/services/gemini_service.py`
-   - Explanation endpoint: `/supply-chain/explain/{shipment_id}`
-   - Additional AI-driven operational endpoints in supply chain routes
 
 ### Data flow example
 
