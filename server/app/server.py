@@ -1,26 +1,34 @@
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.bots.discord_bot import start_bot as start_discord, stop_bot as stop_discord
-from app.bots.telegram_bot import start_bot as start_telegram, stop_bot as stop_telegram
 from app.routes import health
+from app.routes import supply_chain
+from app.services.supply_chain_service import supply_chain_service
+from app.utils.maps import maps_client
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage application lifecycle: start bots on startup, stop on shutdown."""
-    await start_telegram()
-    await start_discord()
+async def lifespan(app: FastAPI):
+    if maps_client.is_enabled():
+        result = await supply_chain_service.enrich_with_google_maps()
+        print(f"[Startup] Google Maps enrichment: {result}")
     yield
-    await stop_telegram()
-    await stop_discord()
 
 
 app = FastAPI(docs_url="/docs", redoc_url="/redoc", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(health.router)
+app.include_router(supply_chain.router)
 
 
 @app.get("/")
