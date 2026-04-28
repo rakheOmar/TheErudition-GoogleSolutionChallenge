@@ -52,7 +52,7 @@ async def get_disruptions():
 
 @router.post("/disruptions")
 async def create_disruption(request: DisruptionCreateRequest):
-    return await supply_chain_service.create_disruption(request)
+    return supply_chain_service.create_disruption(request)
 
 
 @router.patch("/disruptions/{disruption_id}")

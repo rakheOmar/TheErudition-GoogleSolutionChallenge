@@ -1274,7 +1274,7 @@ class SupplyChainService:
                         if e.target_type == "node" and node.id in e.target_values and e.active]
             if existing:
                 continue
-            await self.create_disruption(DisruptionCreateRequest(
+            self.create_disruption(DisruptionCreateRequest(
                 event_type="weather_alert",
                 severity=severity,
                 target_type="node",
@@ -1294,7 +1294,7 @@ class SupplyChainService:
                 for e in self._state.disruptions.values()
             )
             if not has_global_traffic:
-                await self.create_disruption(
+                self.create_disruption(
                     DisruptionCreateRequest(
                         event_type="traffic_congestion",
                         severity="medium",
