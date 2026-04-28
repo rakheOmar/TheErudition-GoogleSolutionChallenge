@@ -58,6 +58,10 @@ export function NetworkPage({ onRefresh }) {
                (e.from_node === corr.destination_node && e.to_node === corr.source_node);
       });
 
+  const filteredCorridorIds = filters.selectedCorridor === "all"
+    ? null
+    : [filters.selectedCorridor];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12 text-[#a6a6a6]">
@@ -115,6 +119,7 @@ export function NetworkPage({ onRefresh }) {
           edges={filters.showRoutes ? filteredEdges : []}
           shipments={filters.showShipments ? shipments : []}
           disruptions={filters.showDisruptions ? disruptions.filter(d => d.active) : []}
+          filteredCorridorIds={filteredCorridorIds}
         />
       </div>
 

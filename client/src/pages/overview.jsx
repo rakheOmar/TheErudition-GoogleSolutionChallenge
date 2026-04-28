@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
 
 export function OverviewPage({ onRefresh }) {
@@ -9,7 +9,7 @@ export function OverviewPage({ onRefresh }) {
   const [corridors, setCorridors] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [ov, sh, dis, pol, cor] = await Promise.all([
@@ -28,11 +28,13 @@ export function OverviewPage({ onRefresh }) {
       console.error("Load failed", e);
     }
     setLoading(false);
-  }
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [load]);
 
   const riskStats = { low: 0, medium: 0, high: 0, critical: 0 };
   shipments.forEach((s) => {

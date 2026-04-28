@@ -32,7 +32,7 @@ const getDisruptionColor = (severity) => {
   return "#666666";
 };
 
-export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptions = [] }) {
+export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptions = [], filteredCorridorIds = null }) {
   const [selected, setSelected] = useState(null);
   const [infoBox, setInfoBox] = useState(null);
 
@@ -80,13 +80,18 @@ export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptio
 
     const isDisrupted = disruptedEdgeIds.has(edge.id) ||
       disruptedNodeIds.has(edge.from_node) ||
-      disruptedNodeIds.has(edge.to_node) ||
-      disruptedCorridorIds.has(`corr_${edge.from_node}_${edge.to_node}`) ||
-      disruptedCorridorIds.has(`corr_${edge.to_node}_${edge.from_node}`);
+      disruptedNodeIds.has(edge.to_node);
+
+    const corridorId = `corr_${from.id}_${to.id}`;
+    const reverseCorridorId = `corr_${to.id}_${from.id}`;
+    const matchesFilter = !filteredCorridorIds ||
+      filteredCorridorIds.includes(corridorId) ||
+      filteredCorridorIds.includes(reverseCorridorId);
 
     return {
       path: [{ lat: from.lat, lng: from.lng }, { lat: to.lat, lng: to.lng }],
       isDisrupted,
+      isvisible: matchesFilter,
       edge,
     };
   }).filter(Boolean);
@@ -133,7 +138,7 @@ export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptio
         );
       })}
 
-      {routePaths.map((route, i) => (
+      {routePaths.filter(r => r.isvisible).map((route, i) => (
         <Polyline
           key={i}
           path={route.path}
