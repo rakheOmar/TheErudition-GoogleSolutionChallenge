@@ -1,44 +1,67 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supplyChainApi } from "../lib/supply-chain-api";
+
+const EVENT_TYPES = [
+  { value: "weather_alert", label: "Weather Alert" },
+  { value: "traffic_congestion", label: "Traffic Congestion" },
+  { value: "vehicle_breakdown", label: "Vehicle Breakdown" },
+  { value: "facility_delay", label: "Facility Delay" },
+  { value: "regulatory_delay", label: "Regulatory Delay" },
+];
+
+const SEVERITIES = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+const TARGET_TYPES = [
+  { value: "node", label: "Node" },
+  { value: "edge", label: "Edge" },
+  { value: "corridor", label: "Corridor" },
+  { value: "global", label: "Global" },
+];
 
 export function DisruptionsPage({ onRefresh }) {
   const [disruptions, setDisruptions] = useState([]);
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [corridors, setCorridors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
     event_type: "weather_alert",
     severity: "medium",
-    target_type: "corridor",
-    target_values: "",
+    target_type: "node",
+    target_value: "",
     eta_multiplier: "1.3",
-    risk_delta: "1.0",
-    active: true,
+    risk_delta: "1.2",
   });
   const [submitting, setSubmitting] = useState(false);
 
-  const eventTypes = [
-    "weather_alert",
-    "traffic_congestion",
-    "vehicle_breakdown",
-    "facility_delay",
-    "regulatory_delay",
-  ];
-  const severities = ["low", "medium", "high"];
-  const targetTypes = ["corridor", "node", "edge", "carrier", "global"];
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await supplyChainApi.disruptions();
-      setDisruptions(data);
-    } catch (e) {
-      console.error("Load failed", e);
+      const [d, n, e, c] = await Promise.all([
+        supplyChainApi.disruptions(),
+        supplyChainApi.nodes(),
+        supplyChainApi.edges(),
+        supplyChainApi.corridors(),
+      ]);
+      setDisruptions(d);
+      setNodes(n);
+      setEdges(e);
+      setCorridors(c);
+    } catch (err) {
+      console.error("Load failed", err);
     }
     setLoading(false);
-  }
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [load]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -48,44 +71,37 @@ export function DisruptionsPage({ onRefresh }) {
         event_type: form.event_type,
         severity: form.severity,
         target_type: form.target_type,
-        target_values: form.target_values
-          .split(",")
-          .map((v) => v.trim())
-          .filter(Boolean),
+        target_values: form.target_value ? [form.target_value] : [],
         eta_multiplier: Number(form.eta_multiplier),
         risk_delta: Number(form.risk_delta),
-        active: form.active,
+        active: true,
       });
+      setForm((f) => ({ ...f, target_value: "" }));
       await load();
       onRefresh?.();
-    } catch (e) {
-      console.error("Create failed", e);
+    } catch (err) {
+      console.error("Create failed", err);
     }
     setSubmitting(false);
   }
 
-  function getSeverityColor(sev) {
-    switch (sev) {
-      case "high":
-        return "bg-red-100 text-red-700 border-red-200";
-      case "medium":
-        return "bg-amber-100 text-amber-700 border-amber-200";
-      default:
-        return "bg-slate-100 text-slate-600 border-slate-200";
-    }
+  function getTargetOptions() {
+    if (form.target_type === "node") return nodes;
+    if (form.target_type === "edge") return edges;
+    if (form.target_type === "corridor") return corridors;
+    return [];
   }
 
-  const activeCount = disruptions.filter((d) => d.active).length;
-  const bySeverity = { high: 0, medium: 0, low: 0 };
-  disruptions
-    .filter((d) => d.active)
-    .forEach((d) => {
-      bySeverity[d.severity]++;
-    });
+  function getTargetLabel(item) {
+    if (form.target_type === "node") return `${item.name} (${item.id})`;
+    if (form.target_type === "edge") return `${item.from_node} → ${item.to_node}`;
+    if (form.target_type === "corridor") return item.name;
+    return item.id;
+  }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-12 text-slate-500">
+      <div className="flex items-center justify-center p-12 text-[#a6a6a6]">
         Loading disruptions...
       </div>
     );
@@ -93,145 +109,78 @@ export function DisruptionsPage({ onRefresh }) {
 
   return (
     <div className="grid gap-6">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-red-200 bg-gradient-to-br from-red-50 to-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-slate-500 text-xs uppercase">
-                High Severity
-              </p>
-              <p className="mt-1 font-bold text-3xl text-red-700">
-                {bySeverity.high}
-              </p>
-            </div>
-            <div className="rounded-full bg-red-100 p-3 text-2xl">High</div>
-          </div>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-slate-500 text-xs uppercase">
-                Medium Severity
-              </p>
-              <p className="mt-1 font-bold text-3xl text-amber-700">
-                {bySeverity.medium}
-              </p>
-            </div>
-            <div className="rounded-full bg-amber-100 p-3 text-2xl">Med</div>
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-slate-500 text-xs uppercase">
-                Low Severity
-              </p>
-              <p className="mt-1 font-bold text-3xl text-slate-700">
-                {bySeverity.low}
-              </p>
-            </div>
-            <div className="rounded-full bg-slate-100 p-3 text-2xl">Low</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-3 font-semibold text-slate-800">
-          Create Disruption Event
-        </h3>
-        <form className="grid gap-4 sm:grid-cols-4" onSubmit={handleCreate}>
+      <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
+        <h3 className="mb-4 font-[500] text-[18px] text-white">Create Disruption</h3>
+        <form className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onSubmit={handleCreate}>
           <div>
-            <label className="mb-1 block text-slate-600 text-xs">
-              Event Type
-            </label>
+            <label className="mb-1 block text-[#a6a6a6] text-xs">Event Type</label>
             <select
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, event_type: e.target.value }))
-              }
+              className="w-full rounded-[10px] bg-[#0a0a0a] border border-[rgba(0,153,255,0.15)] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
+              onChange={(e) => setForm((f) => ({ ...f, event_type: e.target.value }))}
               value={form.event_type}
             >
-              {eventTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t.replace("_", " ")}
-                </option>
+              {EVENT_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-slate-600 text-xs">
-              Severity
-            </label>
+            <label className="mb-1 block text-[#a6a6a6] text-xs">Severity</label>
             <select
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, severity: e.target.value }))
-              }
+              className="w-full rounded-[10px] bg-[#0a0a0a] border border-[rgba(0,153,255,0.15)] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
+              onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value }))}
               value={form.severity}
             >
-              {severities.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
+              {SEVERITIES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-slate-600 text-xs">
-              Target Type
-            </label>
+            <label className="mb-1 block text-[#a6a6a6] text-xs">Target Type</label>
             <select
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, target_type: e.target.value }))
-              }
+              className="w-full rounded-[10px] bg-[#0a0a0a] border border-[rgba(0,153,255,0.15)] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
+              onChange={(e) => setForm((f) => ({ ...f, target_type: e.target.value, target_value: "" }))}
               value={form.target_type}
             >
-              {targetTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+              {TARGET_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
           </div>
+          {form.target_type !== "global" && (
+            <div>
+              <label className="mb-1 block text-[#a6a6a6] text-xs">Target</label>
+              <select
+                className="w-full rounded-[10px] bg-[#0a0a0a] border border-[rgba(0,153,255,0.15)] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
+                onChange={(e) => setForm((f) => ({ ...f, target_value: e.target.value }))}
+                required
+                value={form.target_value}
+              >
+                <option value="">Select target...</option>
+                {getTargetOptions().map((item) => (
+                  <option key={item.id} value={item.id}>{getTargetLabel(item)}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
-            <label className="mb-1 block text-slate-600 text-xs">
-              Target Values
-            </label>
+            <label className="mb-1 block text-[#a6a6a6] text-xs">ETA Multiplier</label>
             <input
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, target_values: e.target.value }))
-              }
-              placeholder="corr_xxx, node_id"
-              value={form.target_values}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-slate-600 text-xs">
-              ETA Multiplier
-            </label>
-            <input
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+              className="w-full rounded-[10px] bg-[#0a0a0a] border border-[rgba(0,153,255,0.15)] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
               min="1"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, eta_multiplier: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, eta_multiplier: e.target.value }))}
               step="0.1"
               type="number"
               value={form.eta_multiplier}
             />
           </div>
           <div>
-            <label className="mb-1 block text-slate-600 text-xs">
-              Risk Delta
-            </label>
+            <label className="mb-1 block text-[#a6a6a6] text-xs">Risk Delta</label>
             <input
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+              className="w-full rounded-[10px] bg-[#0a0a0a] border border-[rgba(0,153,255,0.15)] px-3 py-2 text-[14px] text-white focus:border-[#0099ff] focus:outline-none"
               min="0"
-              onChange={(e) =>
-                setForm((f) => ({ ...f, risk_delta: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, risk_delta: e.target.value }))}
               step="0.1"
               type="number"
               value={form.risk_delta}
@@ -239,68 +188,59 @@ export function DisruptionsPage({ onRefresh }) {
           </div>
           <div className="flex items-end">
             <button
-              className="w-full rounded-lg bg-amber-600 px-4 py-2 font-medium text-sm text-white hover:bg-amber-700 disabled:opacity-50"
+              className="rounded-[10px] bg-[#0099ff] px-4 py-2 font-[500] text-[14px] text-white hover:bg-[#0088ee] disabled:opacity-50"
               disabled={submitting}
               type="submit"
             >
-              {submitting ? "Creating..." : "Add Disruption"}
+              {submitting ? "Creating..." : "Create Disruption"}
             </button>
           </div>
         </form>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="rounded-[15px] bg-[#090909] p-6 framer-ring">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-semibold text-slate-800">
-            All Disruption Events ({disruptions.length})
-          </h3>
-          <span className="rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-700 text-xs">
-            {activeCount} active
-          </span>
+          <h3 className="font-[500] text-[18px] text-white">Active Disruptions ({disruptions.filter(d => d.active).length})</h3>
+          <button
+            className="rounded-[10px] border border-[rgba(0,153,255,0.15)] px-3 py-1 text-[14px] text-[#a6a6a6] hover:border-[#0099ff]"
+            onClick={load}
+          >
+            Refresh
+          </button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {disruptions.map((d) => (
-            <div
-              className={`rounded-lg border p-4 ${getSeverityColor(d.severity)} ${d.active ? "" : "opacity-50"}`}
-              key={d.id}
-            >
+        <div className="grid gap-3">
+          {disruptions.filter(d => d.active).map((d) => (
+            <div key={d.id} className="rounded-[10px] bg-[#0a0a0a] p-4 border border-[rgba(255,68,68,0.2)]">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="font-semibold text-sm">
-                    {d.event_type.replace("_", " ")}
-                  </p>
-                  <p className="mt-1 text-xs opacity-75">
-                    Target: {d.target_type}
-                  </p>
-                  <p className="truncate text-xs opacity-75">
-                    {d.target_values.join(", ")}
-                  </p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`rounded-[100px] px-3 py-1 text-[12px] ${d.severity === "high" ? "bg-[rgba(255,68,68,0.15)] text-[#ff4444]" : d.severity === "medium" ? "bg-[rgba(255,170,0,0.15)] text-[#ffaa00]" : "bg-[rgba(166,166,166,0.15)] text-[#a6a6a6]"}`}>
+                      {d.severity}
+                    </span>
+                    <span className="text-white font-[500] text-[14px]">{d.event_type.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="text-[13px] text-[#a6a6a6]">
+                    Target: {d.target_type} → {d.target_values?.join(", ")}
+                  </div>
+                  <div className="flex gap-4 mt-2 text-[12px] text-[#a6a6a6]">
+                    <span>ETA x{d.eta_multiplier}</span>
+                    <span>Risk +{d.risk_delta}</span>
+                  </div>
                 </div>
-                <span
-                  className={`rounded-full px-2 py-0.5 font-medium text-xs ${d.severity === "high" ? "bg-red-200 text-red-800" : d.severity === "medium" ? "bg-amber-200 text-amber-800" : "bg-slate-200 text-slate-600"}`}
+                <button
+                  className="rounded-[8px] border border-[rgba(255,68,68,0.3)] px-3 py-1 text-[12px] text-[#ff4444] hover:bg-[rgba(255,68,68,0.1)]"
+                  onClick={async () => {
+                    await supplyChainApi.updateDisruption(d.id, { active: false });
+                    await load();
+                  }}
                 >
-                  {d.severity}
-                </span>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="opacity-75">ETA×</span>{" "}
-                  <span className="font-medium">{d.eta_multiplier}</span>
-                </div>
-                <div>
-                  <span className="opacity-75">Risk+</span>{" "}
-                  <span className="font-medium">{d.risk_delta}</span>
-                </div>
-              </div>
-              <div className="mt-2 border-black/10 border-t pt-2 text-xs">
-                Status: {d.active ? "Active" : "Resolved"}
+                  Resolve
+                </button>
               </div>
             </div>
           ))}
-          {disruptions.length === 0 && (
-            <div className="col-span-full py-8 text-center text-slate-500">
-              No disruptions. Add one above or seed demo data.
-            </div>
+          {disruptions.filter(d => d.active).length === 0 && (
+            <div className="text-center py-8 text-[#a6a6a6] text-[14px]">No active disruptions</div>
           )}
         </div>
       </div>

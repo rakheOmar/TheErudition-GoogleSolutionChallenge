@@ -825,5 +825,32 @@ class SupplyChainService:
             return True
         return False
 
+    async def check_weather_and_create_disruptions(self) -> dict[str, Any]:
+        created = 0
+        for node in self._state.nodes.values():
+            if not weather_client.is_enabled():
+                break
+            weather = await weather_client.get_weather(node.lat, node.lng, node.name)
+            if not weather:
+                continue
+            if not self._check_weather_alert(weather):
+                continue
+            severity = "high" if weather.weather_code >= 95 or weather.wind_speed > 25 else "medium"
+            existing = [e for e in self._state.disruptions.values()
+                        if e.target_type == "node" and node.id in e.target_values and e.active]
+            if existing:
+                continue
+            self.create_disruption(DisruptionCreateRequest(
+                event_type="weather_alert",
+                severity=severity,
+                target_type="node",
+                target_values=[node.id],
+                eta_multiplier=1.5 if severity == "high" else 1.2,
+                risk_delta=2.5 if severity == "high" else 1.2,
+                active=True,
+            ))
+            created += 1
+        return {"status": "ok", "disruptions_created": created}
+
 
 supply_chain_service = SupplyChainService()

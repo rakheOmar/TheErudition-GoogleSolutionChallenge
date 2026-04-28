@@ -42,6 +42,11 @@ export const supplyChainApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  updateDisruption: (disruptionId, payload) =>
+    request(`/supply-chain/disruptions/${disruptionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   createPolicy: (payload) =>
     request("/supply-chain/policies", {
       method: "POST",

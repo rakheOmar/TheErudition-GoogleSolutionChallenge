@@ -54,6 +54,26 @@ async def create_disruption(request: DisruptionCreateRequest):
     return supply_chain_service.create_disruption(request)
 
 
+@router.patch("/disruptions/{disruption_id}")
+async def update_disruption(disruption_id: str, request: dict):
+    try:
+        from app.models.supply_chain import DisruptionCreateRequest
+        disruption = supply_chain_service._state.disruptions.get(disruption_id)
+        if not disruption:
+            raise HTTPException(status_code=404, detail="Disruption not found")
+        for key, value in request.items():
+            if hasattr(disruption, key):
+                setattr(disruption, key, value)
+        supply_chain_service._recompute_all_shipments()
+        from app.db import db
+        db.save_disruptions(supply_chain_service._state.disruptions)
+        return disruption
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get("/shipments")
 async def get_shipments():
     return supply_chain_service.list_shipments()
