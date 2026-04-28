@@ -55,38 +55,36 @@ The platform continuously monitors shipment risk, detects disruptions early, rec
 
 - Disruption created -> backend recomputes affected shipments -> recommendations update -> event published to RabbitMQ -> frontend refreshes and shows new risk/actions.
 
-## Key Backend Endpoints
+## Logistics Domain Model
 
-### Core
+The core logistics model lives in `server/app/models/supply_chain.py` and is designed to map real-world supply chain operations into typed entities.
 
-- `GET /supply-chain/overview`
-- `GET /supply-chain/shipments`
-- `POST /supply-chain/shipments`
-- `POST /supply-chain/shipments/{shipment_id}/recompute`
-- `GET /supply-chain/disruptions`
-- `POST /supply-chain/disruptions`
-- `PATCH /supply-chain/disruptions/{disruption_id}`
-- `GET /supply-chain/policies`
-- `POST /supply-chain/policies`
-- `PATCH /supply-chain/policies/{policy_id}`
+| Model | Purpose in logistics system | Key fields used |
+|---|---|---|
+| `Node` | Physical points in the network (city/hub/warehouse) | `id`, `name`, `state`, `lat`, `lng`, `type` |
+| `Edge` | Transport links between nodes | `from_node`, `to_node`, `carrier`, `distance_km`, `base_eta_h`, `base_cost`, `cold_chain_capable` |
+| `Corridor` | Business route lane between source and destination | `id`, `name`, `source_node`, `destination_node` |
+| `LoadProfile` | Shipment class and SLA constraints by goods type | `label`, `min_temp_c`, `max_temp_c`, `max_transit_h`, `weights` |
+| `PolicyLayer` | Governance rules that constrain route selection | `owner_type`, `rule_type`, `applies_to`, `priority`, `enabled` |
+| `ScenarioEvent` | Disruption signal affecting network performance | `event_type`, `severity`, `target_type`, `target_values`, `eta_multiplier`, `risk_delta`, `active` |
+| `Shipment` | Shipment execution unit moving on a corridor | `corridor_id`, `load_profile_id`, `sla_eta_h`, `status` |
+| `PathOption` | Candidate route with scored trade-offs | `path_nodes`, `path_edges`, `eta_h`, `cost`, `risk`, `compliance_risk`, `score` |
+| `Recommendation` | Decision output for a shipment | `action`, `confidence`, `chosen_path`, `alternatives`, `reason_codes`, `expected_impact` |
+| `ShipmentWithRecommendation` | API response composition for operations UI | `shipment`, `recommendation` |
+| `AuditEntry` | Immutable operational trace for explainability | `entity_type`, `entity_id`, `action`, `details`, `timestamp_utc` |
+| `HeroScenarioResult` | Seed/demo scenario summary payload | `shipments_seeded`, `disruptions_seeded`, `policies_seeded`, `notes` |
+| `OverviewResponse` | Top-line dashboard counters | `active_shipments`, `active_disruptions`, `policies_enabled`, `corridors_supported` |
 
-### AI / Risk / Optimization
+### Goods / shipment types used (`LoadProfile`)
 
-- `GET /supply-chain/risks/predictive`
-- `GET /supply-chain/risks/forecast`
-- `GET /supply-chain/analytics/kpis`
-- `POST /supply-chain/recommendations/auto-execute`
-- `GET /supply-chain/policies/ai-suggestions`
-- `POST /supply-chain/policies/ai-approve`
-- `POST /supply-chain/simulate/disruption-worsen`
-- `POST /supply-chain/copilot/chat`
-- `GET /supply-chain/incidents/{disruption_id}/timeline`
-- `GET /supply-chain/explain/{shipment_id}`
-
-### Demo / Ops
-
-- `POST /supply-chain/disruptions/auto-from-weather`
-- `POST /supply-chain/demo/hero`
+| Load profile | Operational meaning | Typical constraints |
+|---|---|---|
+| `cold_chain` | Temperature-sensitive pharma/perishables | tighter temperature band + moderate SLA |
+| `frozen` | Deep cold items | strict low-temp range + strict SLA |
+| `express` | Fast-turnaround priority cargo | strong ETA weight, lower delay tolerance |
+| `fragile` | Break-sensitive items | safer route weighting, medium SLA |
+| `heavy` | High mass freight | higher cost and lane constraints |
+| `standard` | General non-special cargo | balanced ETA/cost/risk weighting |
 
 ## Why RabbitMQ Here
 
@@ -101,13 +99,11 @@ In this project, event publishing is already wired; consumer expansion is the ne
 
 ## Firebase Usage
 
-- **Auth**: login/signup/session state.
-- **Firestore**: mirrored user-level operational writes:
+- **Auth**: login, signup, and session state.
+- **Firestore mirrors user operations**:
   - `users/{uid}/shipments/*`
   - `users/{uid}/disruptions/*`
   - `users/{uid}/policies/*`
-
-Note: system-of-record for core simulation state remains backend SQLite.
 
 ## Project Structure
 
@@ -173,30 +169,6 @@ npm install
 npm run dev
 ```
 
-## Hero Demo Script (1-click)
-
-1. Open **Overview**.
-2. Click **Run Hero Demo**.
-3. Show generated disruptions and risk radar.
-4. Use **Auto-execute High Confidence** and explain impact via KPI cards.
-5. Ask Copilot: `show top 5 at-risk shipments`.
-6. Open Disruptions -> Timeline to narrate incident handling.
-
-## Current Status vs Problem 3 Objective
-
-Implemented strongly:
-
-- Continuous transit analysis
-- Early disruption detection/flagging
-- Dynamic recommendation and policy-constrained rerouting
-- Cascading risk visibility and operational tooling
-
-Still future-enhancement territory:
-
-- Full production-grade streaming UI (WebSocket/SSE everywhere)
-- Large-scale load testing benchmarks
-- Long-horizon ML model trained on real historical logistics data
-
 ## Tech Stack
 
 - Frontend: React, Vite, Tailwind-style utility classes
@@ -205,3 +177,14 @@ Still future-enhancement territory:
 - Messaging: RabbitMQ
 - AI: Gemini API
 - Maps/Geo: Google Maps APIs
+
+## Google Technology Stack
+
+| Google product | How it is used in this project |
+|---|---|
+| Google AI Studio | Prompt prototyping and rapid iteration for Gemini-powered explanations/copilot behaviors |
+| Gemini API | Natural-language explanations, copilot reasoning outputs |
+| Vertex AI | Production upgrade path for managed model serving, evaluation, and MLOps governance |
+| Google Maps Platform | Map rendering and geospatial visualization for corridors/nodes |
+| Firebase Authentication | User auth, identity, and session management |
+| Cloud Firestore | Mirrored per-user ops records for shipments/disruptions/policies |
