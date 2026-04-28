@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from itertools import count
 
 from app.db import db
+from app.events.event_bus import publish_disruption_created, publish_shipment_updated
 from app.models.supply_chain import (
     AuditEntry,
     Corridor,
@@ -285,20 +286,19 @@ class SupplyChainService:
     def create_disruption(self, request: DisruptionCreateRequest) -> ScenarioEvent:
         disruption_id = f"event_{next(self._event_counter)}"
         disruption = ScenarioEvent(id=disruption_id, **request.model_dump())
-        self._state.disruptions[disruption.id] = disruption
-        self._record_audit(
-            entity_type="disruption",
-            entity_id=disruption.id,
-            action="disruption_created",
-            details={
-                "event_type": disruption.event_type,
-                "severity": disruption.severity,
-                "target_type": disruption.target_type,
-            },
-        )
-        self._recompute_all_shipments()
-        db.save_disruptions(self._state.disruptions)
-        return disruption
+            self._state.disruptions[disruption.id] = disruption
+            self._record_audit(
+                entity_type="disruption",
+                entity_id=disruption.id,
+                action="disruption_created",
+                details={
+                    "target_type": disruption.target_type,
+                    "severity": disruption.severity,
+                },
+            )
+            db.save_disruptions(self._state.disruptions)
+            await publish_disruption_created(disruption.model_dump())
+            return disruption
 
     def list_shipments(self) -> list[ShipmentWithRecommendation]:
         entries = []
@@ -351,6 +351,7 @@ class SupplyChainService:
             },
         )
         db.save_shipments(self._state.shipments)
+        await publish_shipment_updated(shipment.model_dump(), recommendation.model_dump())
         return ShipmentWithRecommendation(shipment=shipment, recommendation=recommendation)
 
     def recompute_shipment(self, shipment_id: str) -> ShipmentWithRecommendation:

@@ -16,6 +16,8 @@ export function ShipmentsPage({ onRefresh }) {
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({ corridor_id: "", load_profile_id: "", sla_eta_h: "12" });
   const [submitting, setSubmitting] = useState(false);
+  const [explanations, setExplanations] = useState({});
+  const [explaining, setExplaining] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +69,18 @@ export function ShipmentsPage({ onRefresh }) {
     } catch (e) {
       console.error("Recompute failed", e);
     }
+  }
+
+  async function handleExplain(id) {
+    setExplaining(id);
+    try {
+      const data = await supplyChainApi.explainShipment(id);
+      setExplanations(prev => ({ ...prev, [id]: data.explanation }));
+    } catch (e) {
+      console.error("Explanation failed", e);
+      setExplanations(prev => ({ ...prev, [id]: "Failed to get explanation" }));
+    }
+    setExplaining(null);
   }
 
   function formatAction(action) {
@@ -189,12 +203,21 @@ export function ShipmentsPage({ onRefresh }) {
                   </td>
                   <td className="px-3 py-3 text-[#a6a6a6] text-[13px]">{(s.recommendation.confidence * 100).toFixed(0)}%</td>
                   <td className="px-3 py-3">
-                    <button
-                      className="rounded-[8px] border border-[rgba(0,153,255,0.15)] px-2 py-1 text-[#0099ff] text-[12px] hover:border-[#0099ff]"
-                      onClick={(e) => { e.stopPropagation(); handleRecompute(s.shipment.id); }}
-                    >
-                      ↻
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        className="rounded-[8px] border border-[rgba(0,153,255,0.15)] px-2 py-1 text-[#0099ff] text-[12px] hover:border-[#0099ff]"
+                        onClick={(e) => { e.stopPropagation(); handleRecompute(s.shipment.id); }}
+                      >
+                        ↻
+                      </button>
+                      <button
+                        className="rounded-[8px] border border-[rgba(0,153,255,0.15)] px-2 py-1 text-[#0099ff] text-[12px] hover:border-[#0099ff] disabled:opacity-50"
+                        disabled={explaining === s.shipment.id}
+                        onClick={(e) => { e.stopPropagation(); handleExplain(s.shipment.id); }}
+                      >
+                        {explaining === s.shipment.id ? "..." : "AI"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -236,6 +259,12 @@ export function ShipmentsPage({ onRefresh }) {
                     ))}
                   </div>
                   <div className="mt-3 text-[#a6a6a6] text-[13px]">Confidence: {(sel.recommendation.confidence * 100).toFixed(1)}%</div>
+                  {explanations[sel.shipment.id] && (
+                    <div className="mt-3 rounded-[10px] bg-[rgba(0,153,255,0.05)] border border-[rgba(0,153,255,0.1)] p-3">
+                      <h5 className="mb-1 font-[500] text-[12px] text-[#0099ff]">AI Explanation</h5>
+                      <p className="text-[13px] text-[#a6a6a6] leading-relaxed">{explanations[sel.shipment.id]}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             );

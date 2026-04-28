@@ -6,6 +6,7 @@ from app.models.supply_chain import (
     PolicyUpdateRequest,
     ShipmentCreateRequest,
 )
+from app.services.gemini_service import explain_recommendation
 from app.services.supply_chain_service import supply_chain_service
 
 router = APIRouter(prefix="/supply-chain", tags=["supply_chain"])
@@ -146,6 +147,24 @@ async def get_node_weather(node_id: str):
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return await supply_chain_service.get_weather_for_node(node_id)
+
+
+@router.get("/explain/{shipment_id}")
+async def explain_shipment(shipment_id: str):
+    try:
+        s = supply_chain_service._state.shipments.get(shipment_id)
+        if not s:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+        recommendation = supply_chain_service._state.recommendations.get(shipment_id)
+        if not recommendation:
+            raise HTTPException(status_code=404, detail="Recommendation not found")
+        from app.services.gemini_service import explain_recommendation
+        explanation = await explain_recommendation(s.model_dump(), recommendation.model_dump())
+        return {"explanation": explanation}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/disruptions/auto-from-weather")

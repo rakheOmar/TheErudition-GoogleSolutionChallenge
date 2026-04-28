@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.events.event_bus import get_channel
 from app.routes import health
 from app.routes import supply_chain
 from app.services.supply_chain_service import supply_chain_service
@@ -14,6 +15,8 @@ async def lifespan(app: FastAPI):
     if maps_client.is_enabled():
         result = await supply_chain_service.enrich_with_google_maps()
         print(f"[Startup] Google Maps enrichment: {result}")
+    await get_channel()
+    print("[Startup] RabbitMQ event bus connected")
     yield
 
 

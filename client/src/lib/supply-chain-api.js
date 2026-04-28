@@ -67,4 +67,5 @@ export const supplyChainApi = {
   enrichWithGoogleMaps: () =>
     request("/supply-chain/enrich/maps", { method: "POST" }),
   getWeather: (nodeId) => request(`/supply-chain/weather/${nodeId}`),
+  explainShipment: (shipmentId) => request(`/supply-chain/explain/${shipmentId}`),
 };
