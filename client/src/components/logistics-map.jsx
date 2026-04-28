@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { GoogleMap, useJsApiLoader, Marker, Polyline } from "@react-google-maps/api";
+import { GoogleMap, useJsApiLoader, Marker, Polyline, InfoBox } from "@react-google-maps/api";
 
 const mapContainerStyle = {
   width: "100%",
@@ -26,8 +26,15 @@ const mapOptions = {
   ],
 };
 
+const getDisruptionColor = (severity) => {
+  if (severity === "high") return "#ff4444";
+  if (severity === "medium") return "#ffaa00";
+  return "#666666";
+};
+
 export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptions = [] }) {
   const [selected, setSelected] = useState(null);
+  const [infoBox, setInfoBox] = useState(null);
 
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "",
@@ -56,15 +63,43 @@ export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptio
     );
   }
 
+  const disruptedNodeIds = new Set(
+    disruptions.filter(d => d.active && d.target_type === "node").flatMap(d => d.target_values || [])
+  );
+  const disruptedEdgeIds = new Set(
+    disruptions.filter(d => d.active && d.target_type === "edge").flatMap(d => d.target_values || [])
+  );
+  const disruptedCorridorIds = new Set(
+    disruptions.filter(d => d.active && d.target_type === "corridor").flatMap(d => d.target_values || [])
+  );
+
   const routePaths = edges.map(edge => {
     const from = nodes.find(n => n.id === edge.from_node);
     const to = nodes.find(n => n.id === edge.to_node);
     if (!from || !to) return null;
-    return [
-      { lat: from.lat, lng: from.lng },
-      { lat: to.lat, lng: to.lng },
-    ];
+
+    const isDisrupted = disruptedEdgeIds.has(edge.id) ||
+      disruptedNodeIds.has(edge.from_node) ||
+      disruptedNodeIds.has(edge.to_node) ||
+      disruptedCorridorIds.has(`corr_${edge.from_node}_${edge.to_node}`) ||
+      disruptedCorridorIds.has(`corr_${edge.to_node}_${edge.from_node}`);
+
+    return {
+      path: [{ lat: from.lat, lng: from.lng }, { lat: to.lat, lng: to.lng }],
+      isDisrupted,
+      edge,
+    };
   }).filter(Boolean);
+
+  const getNodeShipments = (nodeId) => {
+    return shipments.filter(s => {
+      const corridor = edges.find(e =>
+        (e.from_node === s.shipment?.corridor_id?.split('_')[1] && e.to_node === nodeId) ||
+        (e.to_node === s.shipment?.corridor_id?.split('_')[1] && e.from_node === nodeId)
+      );
+      return corridor;
+    });
+  };
 
   return (
     <GoogleMap
@@ -75,42 +110,71 @@ export function LogisticsMap({ nodes = [], edges = [], shipments = [], disruptio
       onLoad={onMapLoad}
     >
       {nodes.map((node) => {
-        const nodeShipments = shipments.filter(s => s.shipment?.corridor_id?.includes(node.id));
-        const hasDisruption = disruptions.some(d => d.target_values?.includes(node.id) && d.active);
+        const nodeShipments = getNodeShipments(node.id);
+        const hasDisruption = disruptedNodeIds.has(node.id);
+        const risk = nodeShipments.length > 0
+          ? Math.max(...nodeShipments.map(s => s.recommendation?.expected_impact?.risk || 0))
+          : 0;
+
         return (
           <Marker
             key={node.id}
             position={{ lat: node.lat, lng: node.lng }}
-            onClick={() => setSelected(node)}
+            onClick={() => setSelected(selected === node.id ? null : node.id)}
             icon={{
               path: google.maps.SymbolPath.CIRCLE,
               scale: nodeShipments.length > 0 ? 8 + nodeShipments.length : 6,
-              fillColor: hasDisruption ? "#ff4444" : "#0099ff",
+              fillColor: hasDisruption ? "#ff4444" : risk >= 5 ? "#ffaa00" : "#0099ff",
               fillOpacity: 1,
-              strokeColor: hasDisruption ? "#ff4444" : "#0099ff",
+              strokeColor: hasDisruption ? "#ff4444" : risk >= 5 ? "#ffaa00" : "#0099ff",
               strokeWeight: 2,
             }}
           />
         );
       })}
 
-      {routePaths.map((path, i) => (
+      {routePaths.map((route, i) => (
         <Polyline
           key={i}
-          path={path}
+          path={route.path}
           options={{
-            strokeColor: "rgba(0, 153, 255, 0.5)",
-            strokeWeight: 2,
+            strokeColor: route.isDisrupted ? "#ff4444" : "rgba(0, 153, 255, 0.5)",
+            strokeWeight: route.isDisrupted ? 3 : 2,
+            strokeOpacity: route.isDisrupted ? 1 : 0.5,
           }}
         />
       ))}
 
-      {shipments.map((s) => {
-        if (!s.shipment?.corridor_id) return null;
-        const corridor = edges.find(e => e.from_node === s.shipment.corridor_id?.split('_')[1]);
-        if (!corridor) return null;
-        return null;
-      })}
+      {selected && (() => {
+        const node = nodes.find(n => n.id === selected);
+        if (!node) return null;
+        const nodeShipments = getNodeShipments(node.id);
+        const nodeDisruptions = disruptions.filter(d =>
+          d.active && d.target_values?.includes(node.id)
+        );
+        return (
+          <InfoBox
+            position={{ lat: node.lat, lng: node.lng }}
+            options={{
+              closeBoxURL: "",
+              enableEventPropagation: true,
+              pixelOffset: new google.maps.Size(0, -30),
+            }}
+          >
+            <div className="bg-[#090909] border border-[rgba(0,153,255,0.15)] rounded-[10px] p-3 min-w-[200px]">
+              <h4 className="text-white font-[500] text-[14px] mb-2">{node.name}</h4>
+              {nodeDisruptions.length > 0 && (
+                <div className="mb-2">
+                  <span className="text-[#ff4444] text-[12px]">{nodeDisruptions.length} active disruption(s)</span>
+                </div>
+              )}
+              <div className="text-[#a6a6a6] text-[12px]">
+                {nodeShipments.length} shipment(s) via this node
+              </div>
+            </div>
+          </InfoBox>
+        );
+      })()}
     </GoogleMap>
   );
 }
